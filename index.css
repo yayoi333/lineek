@@ -1,0 +1,52 @@
+/* スクロールバー：常時表示・太く・はっきり */
+.scrollbar-thick {
+  scrollbar-width: auto;
+  scrollbar-color: #6b7280 #e5e7eb;
+}
+.scrollbar-thick::-webkit-scrollbar {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.scrollbar-thick::-webkit-scrollbar-track {
+  background: #e5e7eb;
+  border-radius: 9px;
+}
+.scrollbar-thick::-webkit-scrollbar-thumb {
+  background-color: #6b7280;
+  border-radius: 9px;
+  border: 3px solid #e5e7eb;
+  min-height: 40px;
+  min-width: 40px;
+}
+.scrollbar-thick::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563;
+}
+.scrollbar-thick::-webkit-scrollbar-thumb:active {
+  background-color: #374151;
+}
+.scrollbar-thick::-webkit-scrollbar-corner {
+  background: #e5e7eb;
+}
+
+/* PC（マウスがあるデバイス）では少し細めにする */
+@media (hover: hover) and (pointer: fine) {
+  .scrollbar-thick::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scrollbar-thick::-webkit-scrollbar-thumb {
+    border: 2px solid #e5e7eb;
+  }
+}
+
+/* Drag and Drop helper classes */
+.stamp-card {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y; /* Allow vertical scrolling unless touching handle */
+}
+
+.drag-handle {
+  touch-action: none; /* Disable scrolling when touching handle */
+}

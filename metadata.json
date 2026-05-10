@@ -1,0 +1,5 @@
+{
+  "name": "絵文字切り出しくん",
+  "description": "一枚の画像からLINE絵文字を自動で切り出し、背景透過、サイズ調整、翻訳まで行う一気通貫ツールです。",
+  "requestFramePermissions": []
+}
