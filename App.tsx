@@ -2,7 +2,7 @@
 // X/Threads: @yayoi_threee
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Loader2, Image as ImageIcon, Grid, Languages, Settings, ExternalLink, Plus, X as XIcon, Save, GripVertical, Smartphone, Copy, Check, Wand2, Crop, Sliders, Move, ChevronDown, ChevronUp, Info, CheckCircle2, RotateCw, Layers, Minus, Plus as PlusIcon, Trash2, Type } from 'lucide-react';
+import { Upload, Download, Loader2, Image as ImageIcon, Grid, Languages, Settings, ExternalLink, Plus, X as XIcon, Save, GripVertical, Smartphone, Copy, Check, Wand2, Crop, Sliders, Move, ChevronDown, ChevronUp, Info, CheckCircle2, RotateCw, Layers, Minus, Plus as PlusIcon, Trash2, Type, Lock, Unlock } from 'lucide-react';
 import { AppStep, Stamp, MetaData, ExportConfig, SourceImage, TARGET_WIDTH, TARGET_HEIGHT, MAIN_WIDTH, MAIN_HEIGHT, TAB_WIDTH, TAB_HEIGHT, TextObject, ImageLayerObject, DrawingStroke } from './types';
 import { processUploadedImage, reprocessStampWithTolerance } from './lib/imageProcessing';
 import { translateMeta } from './lib/gemini';
@@ -84,7 +84,128 @@ const StampPreview = React.memo<{ stamp: Stamp; previewBg: string }>(({ stamp, p
   );
 });
 
+interface ApiKeyModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (key: string) => void;
+}
+
+const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave }) => {
+  const [key, setKey] = useState(localStorage.getItem('gemini_api_key') || '');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in border border-gray-100">
+        <div className="p-6 pb-2 flex justify-between items-center">
+          <div className="flex items-center gap-2 text-emerald-500">
+             <Settings size={22} />
+             <h2 className="text-xl font-bold text-gray-800">Gemini APIキー設定</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
+            <XIcon size={24} />
+          </button>
+        </div>
+        <div className="p-6 pt-2 space-y-5">
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-blue-700 text-[13px] leading-relaxed">
+            <p className="font-bold mb-0.5">AI翻訳機能を使うにはGemini APIキーが必要です</p>
+            <p className="opacity-80">APIキーはブラウザに保存され、サーバーには送信されません。</p>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">APIキー</label>
+            <input 
+              type="password" 
+              value={key} 
+              onChange={(e) => setKey(e.target.value)} 
+              placeholder="ここにAPIキーを入力"
+              className="w-full px-4 py-3.5 bg-white border-2 border-gray-100 rounded-2xl focus:border-emerald-500 outline-none transition-all placeholder:text-gray-300 text-sm"
+            />
+          </div>
+
+          <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+             <p className="text-xs font-bold text-gray-500 mb-2">APIキーの取得方法:</p>
+             <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside">
+                <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline font-bold">Google AI Studio</a> にアクセス</li>
+                <li>「APIキーを作成」をクリック</li>
+                <li>作成されたキーをコピーして上に貼り付け</li>
+             </ol>
+             <p className="text-[10px] text-gray-400 mt-3 leading-tight italic">※ Gemini APIは無料枠があります。翻訳程度なら無料で使えます。</p>
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button 
+              onClick={() => { localStorage.removeItem('gemini_api_key'); setKey(''); onSave(''); onClose(); }}
+              className="flex-1 px-4 py-3.5 border-2 border-red-50 text-red-400 font-bold rounded-2xl hover:bg-red-50 hover:border-red-100 transition-all text-sm"
+            >
+              キーを削除
+            </button>
+            <button 
+              onClick={() => { localStorage.setItem('gemini_api_key', key); onSave(key); onClose(); }}
+              className="flex-1 px-4 py-3.5 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all text-sm"
+            >
+              保存する
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const REQUIRED_ACCESS_KEY = 'e3mo8-ji4e1';
+
+function hasValidAccessKey(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const hash = window.location.hash.replace(/^#/, '');
+  const params = new URLSearchParams(hash);
+  return params.get('access') === REQUIRED_ACCESS_KEY;
+}
+
+const AccessDeniedScreen = () => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="max-w-md w-full bg-white rounded-[32px] shadow-2xl p-10 text-center animate-fade-in border border-gray-50">
+      <div className="bg-primary-50 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 text-primary-500 shadow-inner">
+        <Lock size={40} />
+      </div>
+      <h1 className="text-2xl font-bold text-gray-800 mb-4 tracking-tight">絵文字切り出しくん</h1>
+      <div className="space-y-4 py-2">
+        <p className="text-gray-600 font-medium leading-relaxed">
+          このページは購入者専用です。<br />
+          販売者から案内された専用URLからアクセスしてください。
+        </p>
+      </div>
+      <div className="mt-10 pt-8 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400 font-mono tracking-widest uppercase">&copy; 2026 yayoi</p>
+      </div>
+    </div>
+  </div>
+);
+
 export default function App() {
+  const [hasAccess, setHasAccess] = useState(() => hasValidAccessKey());
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setHasAccess(hasValidAccessKey());
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  if (!hasAccess) {
+    return <AccessDeniedScreen />;
+  }
+
+  return <EmojiCropperApp />;
+}
+
+function EmojiCropperApp() {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
   const [isProcessing, setIsProcessing] = useState(false);
   const [stamps, setStamps] = useState<Stamp[]>([]);
@@ -115,6 +236,8 @@ export default function App() {
   // Global Settings
   const [globalTolerance, setGlobalTolerance] = useState(20);
   const [gapTolerance, setGapTolerance] = useState(15); 
+  const [isGapToleranceLocked, setIsGapToleranceLocked] = useState(false);
+  const [isGlobalToleranceLocked, setIsGlobalToleranceLocked] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
 
   // New Image Processing State
@@ -142,6 +265,10 @@ export default function App() {
 
   // Text Set Modal
   const [showTextSetModal, setShowTextSetModal] = useState(false);
+
+  // API Key Settings
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [userApiKey, setUserApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
 
   // Toast State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -830,6 +957,49 @@ export default function App() {
       document.body.removeChild(link);
   };
 
+  const downloadMainImage = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = MAIN_WIDTH;
+      canvas.height = MAIN_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      for (let i = 0; i < 4; i++) {
+          const id = mainEmojiIds[i];
+          if (!id) continue;
+          const stamp = stamps.find(s => s.id === id);
+          if (!stamp) continue;
+          
+          await new Promise<void>((resolve) => {
+              const img = new Image();
+              img.onload = () => {
+                  const row = Math.floor(i / 2);
+                  const col = i % 2;
+                  const slotW = MAIN_WIDTH / 2;
+                  const slotH = MAIN_HEIGHT / 2;
+                  const scale = Math.min(slotW / TARGET_WIDTH, slotH / TARGET_HEIGHT);
+                  const dw = TARGET_WIDTH * scale;
+                  const dh = TARGET_HEIGHT * scale;
+                  const dx = col * slotW + (slotW - dw) / 2;
+                  const dy = row * slotH + (slotH - dh) / 2;
+                  ctx.drawImage(img, dx, dy, dw, dh);
+                  resolve();
+              };
+              img.onerror = () => resolve();
+              img.src = stamp.dataUrl;
+          });
+      }
+      
+      const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'));
+      if (!blob) return;
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'main.png';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
   const toggleExclude = (id: string) => {
     setStamps(prev => prev.map(s => s.id === id ? { ...s, isExcluded: !s.isExcluded } : s));
   };
@@ -1156,9 +1326,18 @@ export default function App() {
       <header className="bg-white border-b border-primary-100 py-3 px-6 sticky top-0 z-40 shadow-sm">
         <div className="max-w-6xl mx-auto w-full">
             <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                    <div className="bg-primary-500 p-2 rounded-lg text-white"><Grid size={24} /></div>
-                    <h1 className="text-xl font-bold text-gray-800">絵文字切り出しくん</h1>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <div className="bg-primary-500 p-2 rounded-lg text-white"><Grid size={24} /></div>
+                        <h1 className="text-xl font-bold text-gray-800">絵文字切り出しくん</h1>
+                    </div>
+                    <button 
+                        onClick={() => setShowApiKeyModal(true)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${userApiKey ? 'bg-primary-50 border-primary-200 text-primary-600' : 'bg-gray-50 border-gray-200 text-gray-400 hover:text-gray-600'}`}
+                    >
+                        <Settings size={16} />
+                        {userApiKey ? 'API設定済' : 'APIキー設定'}
+                    </button>
                 </div>
                 {step === AppStep.EDIT && (
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-3 animate-fade-in border-t border-primary-50 pt-2">
@@ -1172,22 +1351,101 @@ export default function App() {
                         </div>
                         <div className="hidden sm:block h-6 w-px bg-gray-200"></div>
                         <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1 text-xs font-bold text-gray-500"><Layers size={14} /><span className="hidden sm:inline">まとめる強さ</span></div>
-                            <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1 border border-gray-200">
-                                <button onClick={() => setGapTolerance(Math.max(0, gapTolerance - 1))} className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"><Minus size={12} /></button>
-                                <input type="range" min="0" max="50" value={gapTolerance} onChange={handleGapToleranceChange} className="w-16 accent-primary-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                                <button onClick={() => setGapTolerance(Math.min(50, gapTolerance + 1))} className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"><PlusIcon size={12} /></button>
+                            <button 
+                                onClick={() => setIsGapToleranceLocked(!isGapToleranceLocked)}
+                                className={`flex items-center gap-1 text-xs font-bold transition-colors ${isGapToleranceLocked ? 'text-primary-600' : 'text-gray-500 hover:text-primary-500'}`}
+                            >
+                                {isGapToleranceLocked ? <Lock size={14} /> : <Layers size={14} />}
+                                <span className="hidden sm:inline">まとめる強さ</span>
+                            </button>
+                            <div className={`flex items-center gap-1 rounded-lg p-1 border transition-all ${isGapToleranceLocked ? 'bg-gray-100 border-gray-100 opacity-60' : 'bg-gray-50 border-gray-200'}`}>
+                                <button 
+                                    onClick={() => setGapTolerance(Math.max(0, gapTolerance - 1))} 
+                                    disabled={isGapToleranceLocked}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <Minus size={12} />
+                                </button>
+                                <input 
+                                    type="range" 
+                                    min="0" 
+                                    max="50" 
+                                    value={gapTolerance} 
+                                    onChange={handleGapToleranceChange} 
+                                    disabled={isGapToleranceLocked}
+                                    className="w-16 accent-primary-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed" 
+                                />
+                                <button 
+                                    onClick={() => setGapTolerance(Math.min(50, gapTolerance + 1))} 
+                                    disabled={isGapToleranceLocked}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <PlusIcon size={12} />
+                                </button>
                                 <span className="text-xs text-gray-500 font-mono w-6 text-right shrink-0">{gapTolerance}</span>
                             </div>
                             {isRegenerating && <Loader2 size={14} className="animate-spin text-primary-500" />}
                         </div>
                         <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1 text-xs font-bold text-gray-500"><Sliders size={14} /><span className="hidden sm:inline">一括透過</span></div>
-                            <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1 border border-gray-200">
-                                <button onClick={() => setGlobalTolerance(Math.max(1, globalTolerance - 1))} className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"><Minus size={12} /></button>
-                                <input type="range" min="1" max="100" value={globalTolerance} onChange={handleGlobalToleranceChange} className="w-16 accent-primary-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                                <button onClick={() => setGlobalTolerance(Math.min(100, globalTolerance + 1))} className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"><PlusIcon size={12} /></button>
+                            <button 
+                                onClick={() => setIsGlobalToleranceLocked(!isGlobalToleranceLocked)}
+                                className={`flex items-center gap-1 text-xs font-bold transition-colors ${isGlobalToleranceLocked ? 'text-primary-600' : 'text-gray-500 hover:text-primary-500'}`}
+                            >
+                                {isGlobalToleranceLocked ? <Lock size={14} /> : <Sliders size={14} />}
+                                <span className="hidden sm:inline">一括透過</span>
+                            </button>
+                            <div className={`flex items-center gap-1 rounded-lg p-1 border transition-all ${isGlobalToleranceLocked ? 'bg-gray-100 border-gray-100 opacity-60' : 'bg-gray-50 border-gray-200'}`}>
+                                <button 
+                                    onClick={() => setGlobalTolerance(Math.max(1, globalTolerance - 1))} 
+                                    disabled={isGlobalToleranceLocked}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <Minus size={12} />
+                                </button>
+                                <input 
+                                    type="range" 
+                                    min="1" 
+                                    max="100" 
+                                    value={globalTolerance} 
+                                    onChange={handleGlobalToleranceChange} 
+                                    disabled={isGlobalToleranceLocked}
+                                    className="w-16 accent-primary-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed" 
+                                />
+                                <button 
+                                    onClick={() => setGlobalTolerance(Math.min(100, globalTolerance + 1))} 
+                                    disabled={isGlobalToleranceLocked}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <PlusIcon size={12} />
+                                </button>
                                 <span className="text-xs text-gray-500 font-mono w-6 text-right shrink-0">{globalTolerance}</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                             <div className="flex items-center gap-1 text-xs font-bold text-gray-500"><ImageIcon size={14} /><span className="hidden sm:inline">表示サイズ</span></div>
+                             <div className="flex items-center gap-1 bg-gray-50 rounded-lg p-1 border border-gray-200">
+                                <button 
+                                    onClick={() => setCardSize(prev => Math.max(40, prev - 10))}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"
+                                >
+                                    <Minus size={12} />
+                                </button>
+                                <input 
+                                    type="range" 
+                                    min="40" 
+                                    max="300" 
+                                    step="10"
+                                    value={cardSize} 
+                                    onChange={(e) => setCardSize(Number(e.target.value))} 
+                                    className="w-16 accent-primary-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                />
+                                <button 
+                                    onClick={() => setCardSize(prev => Math.min(300, prev + 10))}
+                                    className="w-6 h-6 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 font-bold"
+                                >
+                                    <PlusIcon size={12} />
+                                </button>
+                                <span className="text-xs text-gray-500 font-mono w-8 text-right shrink-0">{cardSize}</span>
                             </div>
                         </div>
                         <div className="hidden sm:block h-6 w-px bg-gray-200"></div>
@@ -1310,34 +1568,6 @@ export default function App() {
                         </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-2 bg-white border border-gray-300 py-1 px-2 sm:px-3 rounded-lg shadow-sm">
-                            <span className="text-[10px] sm:text-xs font-bold text-gray-500 whitespace-nowrap">表示サイズ</span>
-                            <div className="flex items-center gap-1 sm:gap-2">
-                                <button 
-                                    onClick={() => setCardSize(prev => Math.max(40, prev - 10))}
-                                    className="p-1 hover:bg-gray-100 rounded text-gray-500 transition-colors"
-                                    title="小さく"
-                                >
-                                    <Minus size={14} />
-                                </button>
-                                <input 
-                                    type="range" 
-                                    min="40" 
-                                    max="300" 
-                                    step="10"
-                                    value={cardSize} 
-                                    onChange={(e) => setCardSize(Number(e.target.value))} 
-                                    className="w-16 sm:w-24 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-                                />
-                                <button 
-                                    onClick={() => setCardSize(prev => Math.min(300, prev + 10))}
-                                    className="p-1 hover:bg-gray-100 rounded text-gray-500 transition-colors"
-                                    title="大きく"
-                                >
-                                    <Plus size={14} />
-                                </button>
-                            </div>
-                        </div>
                         <button onClick={() => setShowTextSetModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded-lg shadow text-xs sm:text-sm transition"><Type size={16} />テキスト一括追加</button>
                         <button onClick={() => { const updatedStamps = stamps.map(s => ({ ...s, textObjects: (s.textObjects ?? []).filter(t => !t.id.startsWith('txt-set-')), })); setStamps(updatedStamps); showToast('一括削除しました'); }} className={`flex items-center gap-1 bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 text-gray-600 hover:text-red-600 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition ${stamps.some(s => s.textObjects?.some(t => t.id.startsWith('txt-set-'))) ? '' : 'opacity-30 pointer-events-none'}`}><Trash2 size={14} />一括テキスト削除</button>
                         <button onClick={handleUnifyScale} className="flex items-center gap-1 bg-white border border-gray-300 hover:bg-primary-50 hover:border-primary-300 text-gray-600 hover:text-primary-600 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition"><Sliders size={14} />サイズ揃え</button>
@@ -1413,14 +1643,23 @@ export default function App() {
                         <div>
                             <div className="flex justify-between items-center mb-2">
                                 <label className="block text-sm font-medium text-gray-600">メイン画像 (4個選択)</label>
-                                <button 
-                                    onClick={copyMainEmojiNumbers}
-                                    disabled={!canCopyMainEmojiNumbers}
-                                    className="flex items-center gap-1 text-[11px] font-bold py-1 px-2 rounded bg-primary-50 text-primary-600 hover:bg-primary-100 disabled:opacity-30 disabled:pointer-events-none transition-colors border border-primary-200"
-                                    title="タブ区切りでコピー（対応サイト用）"
-                                >
-                                    <Copy size={12} />番号コピー
-                                </button>
+                                <div className="flex items-center gap-1">
+                                    <button 
+                                        onClick={downloadMainImage}
+                                        className="text-gray-400 hover:text-primary-600 p-1 transition-colors"
+                                        title="2x2メイン画像をダウンロード"
+                                    >
+                                        <Download size={16} />
+                                    </button>
+                                    <button 
+                                        onClick={copyMainEmojiNumbers}
+                                        disabled={!canCopyMainEmojiNumbers}
+                                        className="flex items-center gap-1 text-[10px] font-bold py-1 px-2 rounded bg-primary-50 text-primary-600 hover:bg-primary-100 disabled:opacity-30 disabled:pointer-events-none transition-colors border border-primary-200"
+                                        title="タブ区切りでコピー（対応サイト用）"
+                                    >
+                                        <Copy size={12} />番号コピー
+                                    </button>
+                                </div>
                             </div>
                             <div className="grid grid-cols-2 gap-2 mb-2">
                                 {[0, 1, 2, 3].map(idx => (
@@ -1467,7 +1706,11 @@ export default function App() {
                     </div>
                 </div>
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-primary-100">
-                     <h3 className="font-bold text-gray-700 flex items-center gap-2 mb-4"><Languages className="text-primary-500" size={20} />絵文字名・説明文</h3>
+                     <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                           <Languages className="text-primary-500" size={20} />絵文字名・説明文
+                        </h3>
+                     </div>
                     <div className="space-y-4">
                         <div><div className="flex justify-between items-center mb-1"><div className="flex items-center gap-2"><label className="text-xs font-bold text-gray-500">タイトル（絵文字名）</label><CopyButton text={meta.stampNameJa} /></div><TextCounter current={meta.stampNameJa.length} min={2} max={40} /></div><input type="text" className={`w-full bg-primary-50 border rounded-md text-sm focus:ring-primary-500 focus:border-primary-500 ${meta.stampNameJa.length >= 40 ? 'border-red-300 bg-red-50' : 'border-primary-200'}`} maxLength={40} value={meta.stampNameJa} onChange={e => setMeta({...meta, stampNameJa: e.target.value})} /></div>
                         <div><div className="flex justify-between items-center mb-1"><div className="flex items-center gap-2"><label className="text-xs font-bold text-gray-500">絵文字説明文</label><CopyButton text={meta.stampDescJa} /></div><TextCounter current={meta.stampDescJa.length} min={10} max={160} /></div><textarea className={`w-full bg-primary-50 border rounded-md text-sm focus:ring-primary-500 focus:border-primary-500 ${meta.stampDescJa.length >= 160 ? 'border-red-300 bg-red-50' : 'border-primary-200'}`} rows={3} maxLength={160} value={meta.stampDescJa} onChange={e => setMeta({...meta, stampDescJa: e.target.value})} /><div className="mt-2"><button onClick={() => setDescriptionHintOpen(!descriptionHintOpen)} className="flex items-center gap-1 text-xs text-primary-600 font-bold hover:text-primary-700">{descriptionHintOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}説明文ヒント</button>{descriptionHintOpen && (<div className="mt-2 p-3 bg-gray-100 rounded-lg text-[10px] border border-gray-200 animate-fade-in"><span className="font-bold text-gray-500 mb-1 block">入力例：</span>○○の絵文字。毎日よく使う言葉がたくさん。文末に使いやすい。お煎餅もあるよ。チョコ好きの方も煎餅好きの方もどうぞ！</div>)}</div></div>
@@ -1603,6 +1846,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <ApiKeyModal 
+        isOpen={showApiKeyModal} 
+        onClose={() => setShowApiKeyModal(false)} 
+        onSave={(key) => {
+            setUserApiKey(key);
+            showToast(key ? 'APIキーを保存しました' : 'APIキーを削除しました');
+        }} 
+      />
       {toastMessage && (<div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[60] bg-gray-800 text-white text-sm px-4 py-2 rounded-full shadow-lg pointer-events-none whitespace-nowrap animate-[fadeIn_0.3s_ease-in-out]">{toastMessage}</div>)}
       <footer className="text-center py-4 text-xs text-gray-400"><p>Developed by yayoi 2026</p></footer>
     </div>

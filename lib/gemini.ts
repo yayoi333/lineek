@@ -4,9 +4,9 @@ export async function translateMeta(
   jaName: string,
   jaDesc: string
 ): Promise<{ enName: string; enDesc: string }> {
-  // Try to get API key from process.env (Node/AI Studio) or import.meta.env (Vite)
+  // Try to get API key from localStorage, process.env (Node/AI Studio), or import.meta.env (Vite)
   // @ts-ignore
-  const apiKey = process.env.API_KEY || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY);
+  const apiKey = (typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null) || process.env.API_KEY || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY);
   
   if (!apiKey) {
     throw new Error("APIキーが見つかりません。環境変数(API_KEY または VITE_GEMINI_API_KEY)を設定してください。");

@@ -96,6 +96,14 @@ export const createAndDownloadZip = async (
 
   // 4. Add Meta.txt
   const dateStr = new Date().toISOString().split('T')[0];
+  
+  // Get numbers for main emojis (1-indexed)
+  const mainNumbersFormatted = mainEmojiIds.map(id => {
+    const idx = stamps.findIndex(s => s.id === id);
+    if (idx < 0) return null;
+    return String(idx + 1).padStart(3, '0');
+  }).filter(n => n !== null);
+
   const txtContent = `AppName: 絵文字切り出しくん
 CreatedAt: ${dateStr} (JST)
 
@@ -106,6 +114,9 @@ Description: ${metaData.stampDescJa}
 [English]
 Name: ${metaData.stampNameEn}
 Description: ${metaData.stampDescEn}
+
+[メイン画像]
+${mainNumbersFormatted.join('\t')}
 `;
   zip.file("meta.txt", txtContent);
 
