@@ -272,22 +272,9 @@ export default function App() {
   const [showUnifyScaleModal, setShowUnifyScaleModal] = useState(false);
   const [unifyScaleTarget, setUnifyScaleTarget] = useState<number>(0);
 
-  // Pointer Drag Ref & State
-  const dragStateRef = useRef<{
-    sourceIndex: number | null;
-    pointerId: number | null;
-    startX: number;
-    startY: number;
-    isDragging: boolean;
-  }>({
-    sourceIndex: null,
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    isDragging: false,
-  });
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [activeDragIndex, setActiveDragIndex] = useState<number | null>(null);
+  // Drag and Drop Refs
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
 
   const stampsRef = useRef(stamps);
   useEffect(() => { stampsRef.current = stamps; }, [stamps]);
@@ -1122,83 +1109,38 @@ export default function App() {
   const skipAutoProcessRef = useRef(false);
   const skipAutoSaveRef = useRef(false);
 
-  // --- Pointer Based Drag sorting logic ---
-  const handlePointerDown = (e: React.PointerEvent, index: number) => {
-    // Only allow drag if clicking the handle or if we want global drag
-    const isHandle = (e.target as HTMLElement).closest('.drag-handle');
-    if (!isHandle && cardSize >= 80) return;
-
-    dragStateRef.current = {
-      sourceIndex: index,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      isDragging: false,
-    };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  // --- Drag and Drop Handlers ---
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, position: number) => {
+    dragItem.current = position;
+    e.dataTransfer.effectAllowed = "move";
+    e.currentTarget.style.opacity = "0.5";
   };
 
-  const rafRef = useRef<number | null>(null);
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    const state = dragStateRef.current;
-    if (state.sourceIndex === null || state.pointerId !== e.pointerId) return;
-
-    if (rafRef.current) return;
-
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      const dx = e.clientX - state.startX;
-      const dy = e.clientY - state.startY;
-
-      // Detection threshold (6px)
-      if (!state.isDragging && Math.sqrt(dx * dx + dy * dy) > 6) {
-        state.isDragging = true;
-        setActiveDragIndex(state.sourceIndex);
-      }
-
-      if (state.isDragging) {
-        // Find what element we are currently hovering over
-        const target = document.elementFromPoint(e.clientX, e.clientY);
-        const card = target?.closest('.stamp-card');
-        if (card) {
-          const index = parseInt((card as HTMLElement).dataset.index || '-1');
-          if (index !== -1 && index !== dragOverIndex) {
-            setDragOverIndex(index);
-          }
-        }
-      }
-    });
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>, position: number) => {
+    dragOverItem.current = position;
+    e.preventDefault();
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    const state = dragStateRef.current;
-    if (state.sourceIndex === null || state.pointerId !== e.pointerId) return;
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
 
-    if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
+  const handleDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
+    e.currentTarget.style.opacity = "1";
+    if (
+      dragItem.current !== null &&
+      dragOverItem.current !== null &&
+      dragItem.current !== dragOverItem.current
+    ) {
+      const newStamps = [...stamps];
+      const draggedItemContent = newStamps[dragItem.current];
+      newStamps.splice(dragItem.current, 1);
+      newStamps.splice(dragOverItem.current, 0, draggedItemContent);
+      setStamps(newStamps);
     }
-
-    if (state.isDragging && dragOverIndex !== null && state.sourceIndex !== dragOverIndex) {
-      const newStamps = [...stampsRef.current];
-      const items = [...newStamps];
-      const [movedItem] = items.splice(state.sourceIndex, 1);
-      items.splice(dragOverIndex, 0, movedItem);
-      setStamps(items);
-    }
-
-    // Reset state
-    dragStateRef.current = {
-      sourceIndex: null,
-      pointerId: null,
-      startX: 0,
-      startY: 0,
-      isDragging: false,
-    };
-    setActiveDragIndex(null);
-    setDragOverIndex(null);
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    dragItem.current = null;
+    dragOverItem.current = null;
   };
 
   const moveItem = (from: number, to: number) => {
@@ -1577,26 +1519,24 @@ export default function App() {
                 style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${deferredCardSize}px, 1fr))` }}
               >
                 {stamps.map((stamp, index) => (
-                    <div key={stamp.id} data-index={index}
-                        onPointerDown={(e) => handlePointerDown(e, index)}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerUp}
-                        className={`stamp-card bg-white rounded-xl shadow border-2 transition-all overflow-hidden ${stamp.isExcluded ? 'opacity-50 border-gray-200' : 'border-transparent'} ${activeDragIndex === index ? 'opacity-40 scale-95 ring-2 ring-primary-500 ring-offset-2' : ''} ${dragOverIndex === index && activeDragIndex !== index ? 'border-primary-500 bg-primary-50' : ''} group relative ${cardSize < 80 ? 'touch-none' : ''}`}
+                    <div key={stamp.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragEnter={(e) => handleDragEnter(e, index)}
+                        onDragOver={handleDragOver}
+                        onDragEnd={handleDragEnd}
+                        className={`stamp-card bg-white rounded-xl shadow border-2 transition-all overflow-hidden ${
+                            stamp.isExcluded ? 'opacity-50 border-gray-200' : 'border-transparent hover:border-primary-300'
+                        } group relative cursor-move`}
                     >
-                        <div className="w-full aspect-square relative" onClick={() => {
-                            // Only open modal if we didn't just drag
-                            if (!dragStateRef.current.isDragging) {
-                                setEditingStamp(stamp);
-                            }
-                        }}>
+                        <div className="w-full aspect-square relative" onClick={() => setEditingStamp(stamp)}>
                             <StampPreview stamp={stamp} previewBg={previewBg} />
                             {cardSize >= 80 && (
                                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-colors pointer-events-none"><span className="opacity-0 group-hover:opacity-100 bg-white/90 text-xs px-2 py-1 rounded-full font-bold shadow-sm">編集</span></div>
                             )}
                             {cardSize >= 80 && (
-                                <div className="drag-handle absolute top-2 left-2 bg-white/80 p-1.5 rounded-lg shadow-sm cursor-move touch-none flex items-center justify-center text-gray-600 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                                    <GripVertical size={18} />
+                                <div className="absolute top-2 left-2 bg-white/50 p-1 rounded cursor-move opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                    <GripVertical size={14} className="text-gray-600" />
                                 </div>
                             )}
                             {cardSize >= 80 && (
@@ -1607,25 +1547,42 @@ export default function App() {
                             )}
                         </div>
                         {cardSize >= 80 && (
-                            <div className="px-3 py-2 bg-gray-50 border-t flex flex-col gap-2">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <input type="checkbox" checked={!stamp.isExcluded} onChange={(e) => { e.stopPropagation(); toggleExclude(stamp.id); }} className="w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer shadow-sm" />
-                                        <button
-                                          onClick={(e) => {
+                            <div className="px-3 py-2 bg-gray-50 border-t flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <input
+                                        type="checkbox"
+                                        checked={!stamp.isExcluded}
+                                        onChange={(e) => { e.stopPropagation(); toggleExclude(stamp.id); }}
+                                        className="w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer shadow-sm"
+                                    />
+                                    <button
+                                        onClick={(e) => {
                                             e.stopPropagation();
-                                            setDeleteTarget({id: stamp.id, index: index});
-                                          }}
-                                          className="w-5 h-5 flex items-center justify-center rounded-full text-gray-300 hover:bg-red-100 hover:text-red-500 transition"
-                                          title="完全に削除"
-                                        >
-                                          <XIcon size={14} />
-                                        </button>
-                                    </div>
-                                    <div className="font-bold text-gray-500 text-xs sm:text-sm">{stamp.isExcluded ? '除外' : `No.${String(index + 1).padStart(2,'0')}`}</div>
+                                            setDeleteTarget({ id: stamp.id, index: index });
+                                        }}
+                                        className="w-5 h-5 flex items-center justify-center rounded-full text-gray-300 hover:bg-red-100 hover:text-red-500 transition"
+                                        title="完全に削除"
+                                    >
+                                        <XIcon size={14} />
+                                    </button>
                                 </div>
-                                <div className="flex gap-1 h-5">{mainEmojiIds.includes(stamp.id) && <span className="bg-yellow-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center">MAIN</span>}{tabConfig?.id === stamp.id && <span className="bg-blue-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center">TAB</span>}</div>
 
+                                <div className="font-bold text-gray-500 text-xs sm:text-sm shrink-0">
+                                    {stamp.isExcluded ? '除外' : `No.${String(index + 1).padStart(2, '0')}`}
+                                </div>
+
+                                <div className="flex gap-1 h-5 shrink-0">
+                                    {mainEmojiIds.includes(stamp.id) && (
+                                        <span className="bg-yellow-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center">
+                                            MAIN
+                                        </span>
+                                    )}
+                                    {tabConfig?.id === stamp.id && (
+                                        <span className="bg-blue-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center">
+                                            TAB
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>

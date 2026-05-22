@@ -44,9 +44,4 @@
 .stamp-card {
   user-select: none;
   -webkit-user-select: none;
-  touch-action: pan-y; /* Allow vertical scrolling unless touching handle */
-}
-
-.drag-handle {
-  touch-action: none; /* Disable scrolling when touching handle */
 }
