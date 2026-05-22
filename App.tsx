@@ -166,6 +166,14 @@ function hasValidAccessKey(): boolean {
   return params.get('access') === REQUIRED_ACCESS_KEY;
 }
 
+const isIOSDevice = () => {
+  if (typeof window === 'undefined') return false;
+
+  const ua = window.navigator.userAgent;
+  return /iP(ad|hone|od)/.test(ua) ||
+    (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1);
+};
+
 const AccessDeniedScreen = () => (
   <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
     <div className="max-w-md w-full bg-white rounded-[32px] shadow-2xl p-10 text-center animate-fade-in border border-gray-50">
@@ -188,6 +196,7 @@ const AccessDeniedScreen = () => (
 
 export default function App() {
   const [hasAccess, setHasAccess] = useState(() => hasValidAccessKey());
+  const useArrowReorder = isIOSDevice();
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -1513,36 +1522,93 @@ export default function App() {
                     </div>
                 </div>
               </div>
-              <div className="flex justify-end"><p className="text-xs text-gray-400">※ドラッグ＆ドロップで並べ替えができます</p></div>
+              <div className="flex justify-end">
+                <p className="text-xs text-gray-400">
+                  {useArrowReorder
+                    ? '※矢印ボタンで並べ替えができます'
+                    : '※ドラッグ＆ドロップで並べ替えができます'}
+                </p>
+              </div>
               <div 
                 className={`grid ${cardSize < 80 ? 'gap-1' : 'gap-4'}`}
                 style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${deferredCardSize}px, 1fr))` }}
               >
                 {stamps.map((stamp, index) => (
                     <div key={stamp.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, index)}
-                        onDragEnter={(e) => handleDragEnter(e, index)}
-                        onDragOver={handleDragOver}
-                        onDragEnd={handleDragEnd}
+                        draggable={!useArrowReorder}
+                        onDragStart={!useArrowReorder ? (e) => handleDragStart(e, index) : undefined}
+                        onDragEnter={!useArrowReorder ? (e) => handleDragEnter(e, index) : undefined}
+                        onDragOver={!useArrowReorder ? handleDragOver : undefined}
+                        onDragEnd={!useArrowReorder ? handleDragEnd : undefined}
                         className={`stamp-card bg-white rounded-xl shadow border-2 transition-all overflow-hidden ${
                             stamp.isExcluded ? 'opacity-50 border-gray-200' : 'border-transparent hover:border-primary-300'
-                        } group relative cursor-move`}
+                        } group relative ${useArrowReorder ? 'cursor-default' : 'cursor-move'}`}
                     >
                         <div className="w-full aspect-square relative" onClick={() => setEditingStamp(stamp)}>
                             <StampPreview stamp={stamp} previewBg={previewBg} />
                             {cardSize >= 80 && (
                                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-colors pointer-events-none"><span className="opacity-0 group-hover:opacity-100 bg-white/90 text-xs px-2 py-1 rounded-full font-bold shadow-sm">編集</span></div>
                             )}
-                            {cardSize >= 80 && (
+                            {cardSize >= 80 && !useArrowReorder && (
                                 <div className="absolute top-2 left-2 bg-white/50 p-1 rounded cursor-move opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                                     <GripVertical size={14} className="text-gray-600" />
                                 </div>
                             )}
-                            {cardSize >= 80 && (
+                            {(cardSize >= 80 || useArrowReorder) && (
                                 <div className="absolute top-2 right-2 z-10 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity pointer-events-none sm:pointer-events-auto">
-                                    <button onClick={(e) => { e.stopPropagation(); downloadSingleStamp(stamp); }} className="bg-white text-gray-600 p-1.5 rounded-full shadow hover:bg-gray-100 hover:text-primary-600 cursor-pointer pointer-events-auto" title="ダウンロード"><Download size={14} /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); openManualCrop(stamp.id, stamp.sourceImageId); }} className="bg-white text-gray-600 p-1.5 rounded-full shadow hover:bg-gray-100 hover:text-primary-600 cursor-pointer pointer-events-auto" title="再切り出し"><Crop size={14} /></button>
+                                    {useArrowReorder && (
+                                        <div className="flex gap-1 mr-1 pointer-events-auto">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    moveItem(index, index - 1);
+                                                }}
+                                                disabled={index === 0}
+                                                className="bg-white/90 text-gray-700 p-1.5 rounded-full shadow hover:bg-white disabled:opacity-30 cursor-pointer"
+                                                title="前へ移動"
+                                            >
+                                                <ChevronUp size={14} className="-rotate-90" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    moveItem(index, index + 1);
+                                                }}
+                                                disabled={index === stamps.length - 1}
+                                                className="bg-white/90 text-gray-700 p-1.5 rounded-full shadow hover:bg-white disabled:opacity-30 cursor-pointer"
+                                                title="次へ移動"
+                                            >
+                                                <ChevronDown size={14} className="-rotate-90" />
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {cardSize >= 80 && (
+                                        <>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    downloadSingleStamp(stamp);
+                                                }}
+                                                className="bg-white text-gray-600 p-1.5 rounded-full shadow hover:bg-gray-100 hover:text-primary-600 cursor-pointer pointer-events-auto"
+                                                title="ダウンロード"
+                                            >
+                                                <Download size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    openManualCrop(stamp.id, stamp.sourceImageId);
+                                                }}
+                                                className="bg-white text-gray-600 p-1.5 rounded-full shadow hover:bg-gray-100 hover:text-primary-600 cursor-pointer pointer-events-auto"
+                                                title="再切り出し"
+                                            >
+                                                <Crop size={14} />
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
