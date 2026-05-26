@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Stamp, TextObject, ImageLayerObject, DrawingStroke, TARGET_WIDTH, TARGET_HEIGHT } from '../types';
+import { Stamp, TextObject, ImageLayerObject, DrawingStroke, TARGET_WIDTH, TARGET_HEIGHT, StrokeItem } from '../types';
 import { Check, X, Sliders, Layers, Trash2, Move, Type, Image as ImageIcon, PenTool, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Eraser, Wand2 } from 'lucide-react';
 import { drawTextOnCanvas } from '../lib/zipService';
 import { reprocessStampWithTolerance } from '../lib/imageProcessing';
 import { saveMaterial, loadMaterials, deleteMaterial, MaterialItem } from '../lib/storage';
-import { getSortedLayers, getNextLayerOrder, moveLayerUp, moveLayerDown, getLayerDisplayName } from '../lib/layerUtils';
+import { getSortedLayers, getNextLayerOrder, moveLayerUp, moveLayerDown, getLayerDisplayName, getStrokeItems } from '../lib/layerUtils';
 
 import { TextEditPanel } from './editor/TextEditPanel';
 import { ImageControlPanel } from './editor/ImageControlPanel';
@@ -107,6 +107,7 @@ export const StampEditorModal: React.FC<Props> = ({
   // Drawing State
   const [drawingStrokes, setDrawingStrokes] = useState<DrawingStroke[]>(initialDrawingStrokes ?? stamp.drawingStrokes ?? []);
   const [currentStroke, setCurrentStroke] = useState<{ x: number; y: number }[] | null>(null);
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [penColor, setPenColor] = useState('#000000');
   const [penWidth, setPenWidth] = useState(4);
   const [penOpacity, setPenOpacity] = useState(1.0);
@@ -218,6 +219,7 @@ export const StampEditorModal: React.FC<Props> = ({
       setDrawingStrokes(initialDrawingStrokes ?? stamp.drawingStrokes ?? []);
       setSelectedTextId(null);
       setSelectedImageLayerId(null);
+      setSelectedDrawingId(null);
 
       const initialState = {
           scale: initialScale ?? stamp.scale,
@@ -453,30 +455,45 @@ export const StampEditorModal: React.FC<Props> = ({
   };
 
   const drawStroke = (ctx: CanvasRenderingContext2D, stroke: DrawingStroke) => {
-    if (stroke.points.length < 2) return;
+    const strokesToDraw = getStrokeItems(stroke);
+    if (strokesToDraw.length === 0) return;
+
     ctx.save();
-    ctx.globalAlpha = stroke.opacity;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    
-    const tracePath = () => {
+
+    // Phase 1: outlines
+    strokesToDraw.forEach((s) => {
+      if (s.points.length < 2) return;
+      const outlineWidth = s.outlineWidth ?? 0;
+      if (outlineWidth <= 0) return;
+
       ctx.beginPath();
-      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-      for (let i = 1; i < stroke.points.length; i++) {
-        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      ctx.moveTo(s.points[0].x, s.points[0].y);
+      for (let i = 1; i < s.points.length; i++) {
+        ctx.lineTo(s.points[i].x, s.points[i].y);
       }
-    };
-    if (stroke.outlineWidth && stroke.outlineWidth > 0) {
-      tracePath();
-      ctx.strokeStyle = stroke.outlineColor || '#ffffff';
-      ctx.lineWidth = stroke.width + (stroke.outlineWidth * 2);
+      ctx.globalAlpha = s.opacity;
+      ctx.strokeStyle = s.outlineColor || '#ffffff';
+      ctx.lineWidth = s.width + outlineWidth * 2;
       ctx.stroke();
-    }
-    tracePath();
-    ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = stroke.width;
-    ctx.stroke();
-    ctx.globalAlpha = 1.0;
+    });
+
+    // Phase 2: foreground lines
+    strokesToDraw.forEach((s) => {
+      if (s.points.length < 2) return;
+
+      ctx.beginPath();
+      ctx.moveTo(s.points[0].x, s.points[0].y);
+      for (let i = 1; i < s.points.length; i++) {
+        ctx.lineTo(s.points[i].x, s.points[i].y);
+      }
+      ctx.globalAlpha = s.opacity;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.width;
+      ctx.stroke();
+    });
+
     ctx.restore();
   };
 
@@ -658,11 +675,41 @@ export const StampEditorModal: React.FC<Props> = ({
   };
   const handleDeleteLastStroke = () => {
     if (drawingStrokes.length === 0) return;
-    const newStrokes = drawingStrokes.slice(0, -1); setDrawingStrokes(newStrokes); addToHistory({ drawingStrokes: newStrokes });
+
+    const targetId = selectedDrawingId || drawingStrokes[drawingStrokes.length - 1]?.id;
+    const layerIndex = drawingStrokes.findIndex((s) => s.id === targetId);
+    if (layerIndex === -1) return;
+
+    const layer = { ...drawingStrokes[layerIndex] };
+    const items = getStrokeItems(layer);
+    const updatedItems = items.slice(0, -1);
+
+    let newStrokes = [...drawingStrokes];
+
+    if (updatedItems.length > 0) {
+      const last = updatedItems[updatedItems.length - 1];
+      layer.strokes = updatedItems;
+      layer.points = last.points;
+      layer.color = last.color;
+      layer.width = last.width;
+      layer.opacity = last.opacity;
+      layer.outlineColor = last.outlineColor;
+      layer.outlineWidth = last.outlineWidth;
+      newStrokes[layerIndex] = layer;
+    } else {
+      newStrokes.splice(layerIndex, 1);
+      setSelectedDrawingId(newStrokes.length > 0 ? newStrokes[newStrokes.length - 1].id : null);
+    }
+
+    setDrawingStrokes(newStrokes);
+    addToHistory({ drawingStrokes: newStrokes });
   };
   const handleClearAllStrokes = () => {
     if (drawingStrokes.length === 0) return;
-    setDrawingStrokes([]); addToHistory({ drawingStrokes: [] }); showToast('手書きを全て消しました');
+    setDrawingStrokes([]);
+    setSelectedDrawingId(null);
+    addToHistory({ drawingStrokes: [] });
+    showToast('手書きを全て消しました');
   };
 
   // Layer ordering handlers
@@ -710,8 +757,61 @@ export const StampEditorModal: React.FC<Props> = ({
       setSelectedImageLayerId(id);
     } else if (type === 'mainImage') {
       setMode('move');
+    } else if (type === 'drawing') {
+      setMode('draw');
+      setSelectedDrawingId(id);
     }
-    // drawing はタップしても特に何もしない（選択する概念がないため）
+  };
+
+  const handleModeChange = (newMode: 'move' | 'eraser' | 'wand' | 'restore' | 'text' | 'image' | 'draw') => {
+    setMode(newMode);
+    if (newMode === 'draw') {
+      if (drawingStrokes.length === 0) {
+        const firstId = 'stroke-' + Date.now().toString();
+        const firstStroke: DrawingStroke = {
+          id: firstId,
+          points: [],
+          strokes: [],
+          color: penColor,
+          width: penWidth,
+          opacity: penOpacity,
+          zIndex: penZIndex,
+          layerOrder: getNextLayerOrder(textObjects, imageLayers, drawingStrokes, mainImageLayerOrder, penZIndex),
+          outlineColor: penOutlineColor,
+          outlineWidth: penOutlineWidth
+        };
+        const newStrokes = [firstStroke];
+        setDrawingStrokes(newStrokes);
+        setSelectedDrawingId(firstId);
+        addToHistory({ drawingStrokes: newStrokes });
+      } else {
+        if (!selectedDrawingId) {
+          setSelectedDrawingId(drawingStrokes[drawingStrokes.length - 1].id);
+        }
+      }
+    }
+  };
+
+  const handleAddDrawingLayer = () => {
+    const newId = 'stroke-' + Date.now().toString();
+    const newStroke: DrawingStroke = {
+      id: newId,
+      points: [],
+      strokes: [],
+      color: penColor,
+      width: penWidth,
+      opacity: penOpacity,
+      zIndex: penZIndex,
+      layerOrder: getNextLayerOrder(textObjects, imageLayers, drawingStrokes, mainImageLayerOrder, penZIndex),
+      outlineColor: penOutlineColor,
+      outlineWidth: penOutlineWidth
+    };
+    const newStrokes = [...drawingStrokes, newStroke];
+    setDrawingStrokes(newStrokes);
+    setSelectedDrawingId(newId);
+    setMode('draw');
+    addToHistory({ drawingStrokes: newStrokes });
+    showToast('手書きレイヤーを追加しました');
   };
 
   // ... (Tool Implementation helpers same as before) ...
@@ -939,18 +1039,57 @@ export const StampEditorModal: React.FC<Props> = ({
     if (isResizingText && selectedTextId) handleTextChangeComplete();
     if (isResizingImageLayer) { addToHistory({ imageLayers }); }
     if (mode === 'draw' && currentStroke && currentStroke.length >= 2) {
-        const newStroke: DrawingStroke = { 
-            id: 'stroke-' + Date.now().toString(), 
-            points: currentStroke, 
-            color: penColor, 
-            width: penWidth, 
-            opacity: penOpacity, 
-            zIndex: penZIndex, 
-            layerOrder: getNextLayerOrder(textObjects, imageLayers, drawingStrokes, mainImageLayerOrder, penZIndex),
-            outlineColor: penOutlineColor, 
-            outlineWidth: penOutlineWidth 
+        const selectedId = selectedDrawingId;
+        const layerIndex = drawingStrokes.findIndex((s) => s.id === selectedId);
+
+        const strokeItem: StrokeItem = {
+            points: currentStroke,
+            color: penColor,
+            width: penWidth,
+            opacity: penOpacity,
+            outlineColor: penOutlineColor,
+            outlineWidth: penOutlineWidth,
         };
-        const newStrokes = [...drawingStrokes, newStroke]; setDrawingStrokes(newStrokes); setCurrentStroke(null); addToHistory({ drawingStrokes: newStrokes }); setIsDragging(false); return;
+
+        let newStrokes = [...drawingStrokes];
+
+        if (layerIndex !== -1) {
+            const layer = { ...drawingStrokes[layerIndex] };
+            const existingItems = getStrokeItems(layer);
+
+            layer.strokes = [...existingItems, strokeItem];
+            layer.points = currentStroke;
+            layer.color = penColor;
+            layer.width = penWidth;
+            layer.opacity = penOpacity;
+            layer.outlineColor = penOutlineColor;
+            layer.outlineWidth = penOutlineWidth;
+
+            newStrokes[layerIndex] = layer;
+        } else {
+            const newLayerId = 'stroke-' + Date.now().toString();
+            const newLayer: DrawingStroke = {
+                id: newLayerId,
+                points: currentStroke,
+                color: penColor,
+                width: penWidth,
+                opacity: penOpacity,
+                zIndex: penZIndex,
+                layerOrder: getNextLayerOrder(textObjects, imageLayers, drawingStrokes, mainImageLayerOrder, penZIndex),
+                outlineColor: penOutlineColor,
+                outlineWidth: penOutlineWidth,
+                strokes: [strokeItem],
+            };
+
+            newStrokes = [...drawingStrokes, newLayer];
+            setSelectedDrawingId(newLayerId);
+        }
+
+        setDrawingStrokes(newStrokes);
+        setCurrentStroke(null);
+        addToHistory({ drawingStrokes: newStrokes });
+        setIsDragging(false);
+        return;
     }
     if (mode === 'draw') setCurrentStroke(null);
     setIsDragging(false); setIsResizingText(false); setIsResizingImageLayer(false); setIsResizingImage(false);
@@ -1139,6 +1278,7 @@ export const StampEditorModal: React.FC<Props> = ({
                         onPenOutlineWidthChange={setPenOutlineWidth}
                         onClearAll={handleClearAllStrokes}
                         onDeleteLast={handleDeleteLastStroke}
+                        onAddDrawingLayer={handleAddDrawingLayer}
                     />
                  </CollapsiblePanel>
              )}
@@ -1223,7 +1363,10 @@ export const StampEditorModal: React.FC<Props> = ({
              )}
 
              {/* レイヤー順パネル（テキスト・画像レイヤー・手書きが1つでもある場合に表示） */}
-             {(textObjects.length > 0 || imageLayers.length > 0 || drawingStrokes.length > 0) && (
+             {mode !== 'wand' &&
+              mode !== 'eraser' &&
+              mode !== 'restore' &&
+              (textObjects.length > 0 || imageLayers.length > 0 || drawingStrokes.length > 0) && (
                 <CollapsiblePanel
                     title="レイヤー順"
                     icon={<Layers size={14} className="text-gray-500" />}
@@ -1245,12 +1388,14 @@ export const StampEditorModal: React.FC<Props> = ({
                         selectedType={
                             mode === 'text' && selectedTextId ? 'text' :
                             mode === 'image' && selectedImageLayerId ? 'imageLayer' :
+                            mode === 'draw' && selectedDrawingId ? 'drawing' :
                             mode === 'move' ? 'mainImage' :
                             null
                         }
                         selectedId={
                             mode === 'text' ? selectedTextId :
                             mode === 'image' ? selectedImageLayerId :
+                            mode === 'draw' ? selectedDrawingId :
                             mode === 'move' ? 'main' :
                             null
                         }
@@ -1267,13 +1412,13 @@ export const StampEditorModal: React.FC<Props> = ({
         <div className="px-3 py-2 border-t bg-gray-50 rounded-b-xl shrink-0 flex flex-wrap items-center justify-center gap-2">
              <div className="flex flex-wrap gap-1 items-center justify-center">
                  <ModeSelector
-                    mode={mode} onModeChange={setMode} eraserSize={eraserSize} onEraserSizeChange={setEraserSize} hasOriginalImage={!!originalImage}
+                    mode={mode} onModeChange={handleModeChange} eraserSize={eraserSize} onEraserSizeChange={setEraserSize} hasOriginalImage={!!originalImage}
                     onAddText={handleAddText} onAddImageLayer={handleAddImageLayer}
                     onReset={() => {
                         addToHistory({}); setScale(initialScale ?? stamp.scale); setRotation(initialRotation ?? stamp.rotation ?? 0); setOffset(initialOffset ?? {x:0, y:0});
                         setFlipH(stamp.flipH ?? false); setFlipV(stamp.flipV ?? false); setTolerance(stamp.currentTolerance || 50); setWorkingDataUrl(stamp.dataUrl); 
                         setTextObjects(initialTextObjects ?? stamp.textObjects ?? []); setImageLayers(initialImageLayers ?? stamp.imageLayers ?? []); setDrawingStrokes(initialDrawingStrokes ?? stamp.drawingStrokes ?? []);
-                        setMainImageLayerOrder(stamp.mainImageLayerOrder ?? 100);
+                        setMainImageLayerOrder(stamp.mainImageLayerOrder ?? 100); setSelectedDrawingId(null);
                     }}
                     onOpenMaterialLibrary={() => setShowMaterialLibrary(true)} materialsCount={materials.length}
                  />

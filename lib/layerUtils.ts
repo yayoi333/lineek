@@ -1,5 +1,70 @@
 
-import { TextObject, ImageLayerObject, DrawingStroke } from '../types';
+import { TextObject, ImageLayerObject, DrawingStroke, StrokeItem } from '../types';
+
+type Point = { x: number; y: number };
+type LegacyStrokePoints = Point[];
+
+const isPointArray = (value: unknown): value is Point[] => {
+  return Array.isArray(value) && value.every((p) =>
+    p &&
+    typeof p === 'object' &&
+    typeof (p as Point).x === 'number' &&
+    typeof (p as Point).y === 'number'
+  );
+};
+
+export const getStrokeItems = (stroke: DrawingStroke): StrokeItem[] => {
+  const rawStrokes = stroke.strokes as unknown;
+
+  if (Array.isArray(rawStrokes) && rawStrokes.length > 0) {
+    return rawStrokes.flatMap((item) => {
+      // New format: { points, color, width, opacity, outlineColor, outlineWidth }
+      if (
+        item &&
+        typeof item === 'object' &&
+        'points' in item &&
+        isPointArray((item as StrokeItem).points)
+      ) {
+        const s = item as StrokeItem;
+        return [{
+          points: s.points,
+          color: s.color ?? stroke.color,
+          width: s.width ?? stroke.width,
+          opacity: s.opacity ?? stroke.opacity,
+          outlineColor: s.outlineColor ?? stroke.outlineColor,
+          outlineWidth: s.outlineWidth ?? stroke.outlineWidth ?? 0,
+        }];
+      }
+
+      // Old format: [{x,y}, {x,y}]
+      if (isPointArray(item as LegacyStrokePoints)) {
+        return [{
+          points: item as Point[],
+          color: stroke.color,
+          width: stroke.width,
+          opacity: stroke.opacity,
+          outlineColor: stroke.outlineColor,
+          outlineWidth: stroke.outlineWidth ?? 0,
+        }];
+      }
+
+      return [];
+    });
+  }
+
+  if (stroke.points && stroke.points.length >= 2) {
+    return [{
+      points: stroke.points,
+      color: stroke.color,
+      width: stroke.width,
+      opacity: stroke.opacity,
+      outlineColor: stroke.outlineColor,
+      outlineWidth: stroke.outlineWidth ?? 0,
+    }];
+  }
+
+  return [];
+};
 
 // 全レイヤーのlayerOrderを取得する型
 export interface LayerItem {

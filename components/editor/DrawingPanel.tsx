@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trash2, Layers, Minus } from 'lucide-react';
+import { Trash2, Layers, Minus, Plus } from 'lucide-react';
 import { DrawingStroke } from '../../types';
 import { ControlSlider } from './ControlSlider';
 
@@ -19,6 +19,7 @@ interface DrawingPanelProps {
   onPenOutlineWidthChange: (width: number) => void;
   onClearAll: () => void;
   onDeleteLast: () => void;
+  onAddDrawingLayer: () => void;
 }
 
 export const DrawingPanel: React.FC<DrawingPanelProps> = ({
@@ -36,7 +37,8 @@ export const DrawingPanel: React.FC<DrawingPanelProps> = ({
   onPenOutlineColorChange,
   onPenOutlineWidthChange,
   onClearAll,
-  onDeleteLast
+  onDeleteLast,
+  onAddDrawingLayer
 }) => {
   const textColorOptions = ['#000000', '#FFFFFF', '#ef4444', '#3b82f6', '#10b981', '#f97316', '#ec4899', '#4b3621'];
   const outlineColorOptions = ['#ffffff', '#000000', '#ef4444', '#3b82f6'];
@@ -118,6 +120,14 @@ export const DrawingPanel: React.FC<DrawingPanelProps> = ({
 
         {/* 4. Controls */}
         <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-orange-200/50">
+            <button 
+                onClick={onAddDrawingLayer}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded border bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer"
+            >
+                <Plus size={14}/>
+                レイヤー追加
+            </button>
+
             <button 
                 onClick={() => onPenZIndexChange(penZIndex === 'front' ? 'back' : 'front')}
                 className={`flex items-center gap-1 text-xs px-2 py-1 rounded border ${penZIndex === 'front' ? 'bg-orange-200 border-orange-300' : 'bg-white border-gray-300'}`}

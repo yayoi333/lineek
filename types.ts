@@ -52,9 +52,19 @@ export interface ImageLayerObject {
   layerOrder?: number;   // Added
 }
 
+export interface StrokeItem {
+  points: { x: number; y: number }[];
+  color: string;
+  width: number;
+  opacity: number;
+  outlineColor?: string;
+  outlineWidth?: number;
+}
+
 export interface DrawingStroke {
   id: string;
   points: { x: number; y: number }[];
+  strokes?: StrokeItem[];
   color: string;
   width: number;
   opacity: number;

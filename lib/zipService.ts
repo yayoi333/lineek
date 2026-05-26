@@ -1,7 +1,7 @@
 
 import JSZip from 'jszip';
 import { Stamp, MetaData, ExportConfig, TextObject, ImageLayerObject, DrawingStroke, TARGET_WIDTH, TARGET_HEIGHT, MAIN_WIDTH, MAIN_HEIGHT, TAB_WIDTH, TAB_HEIGHT } from '../types';
-import { getSortedLayers } from './layerUtils';
+import { getSortedLayers, getStrokeItems } from './layerUtils';
 
 export const createAndDownloadZip = async (
   stamps: Stamp[],
@@ -165,34 +165,46 @@ const drawImageLayerOnExport = (
 };
 
 const drawStrokeOnExport = (ctx: CanvasRenderingContext2D, stroke: DrawingStroke) => {
-    if (stroke.points.length < 2) return;
-    ctx.save();
-    ctx.globalAlpha = stroke.opacity;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    const tracePath = () => {
-      ctx.beginPath();
-      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-      for (let i = 1; i < stroke.points.length; i++) {
-        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
-      }
-    };
-    
-    if (stroke.outlineWidth && stroke.outlineWidth > 0) {
-      tracePath();
-      ctx.strokeStyle = stroke.outlineColor || '#ffffff';
-      ctx.lineWidth = stroke.width + (stroke.outlineWidth * 2);
-      ctx.stroke();
+  const strokesToDraw = getStrokeItems(stroke);
+  if (strokesToDraw.length === 0) return;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Phase 1: outlines
+  strokesToDraw.forEach((s) => {
+    if (s.points.length < 2) return;
+    const outlineWidth = s.outlineWidth ?? 0;
+    if (outlineWidth <= 0) return;
+
+    ctx.beginPath();
+    ctx.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) {
+      ctx.lineTo(s.points[i].x, s.points[i].y);
     }
-    
-    tracePath();
-    ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = stroke.width;
+    ctx.globalAlpha = s.opacity;
+    ctx.strokeStyle = s.outlineColor || '#ffffff';
+    ctx.lineWidth = s.width + outlineWidth * 2;
     ctx.stroke();
-    
-    ctx.globalAlpha = 1.0;
-    ctx.restore();
+  });
+
+  // Phase 2: foreground lines
+  strokesToDraw.forEach((s) => {
+    if (s.points.length < 2) return;
+
+    ctx.beginPath();
+    ctx.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) {
+      ctx.lineTo(s.points[i].x, s.points[i].y);
+    }
+    ctx.globalAlpha = s.opacity;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width;
+    ctx.stroke();
+  });
+
+  ctx.restore();
 };
 
 export function renderAllLayers(
