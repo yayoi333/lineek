@@ -35,14 +35,18 @@ export interface MaterialItem {
   createdAt: string;     // ISO文字列
 }
 
-const DB_NAME = 'stamp-cutter-db';
+// 旧DB名 'stamp-cutter-db' はスタンプ切り出しくんと同一オリジン（yayoi333.github.io）で
+// 共有されており、互いのプロジェクト保存を上書きし合う問題があったため、専用のDB名に分離した。
+const DB_NAME = 'emoji-cutter-db';
+const LEGACY_DB_NAME = 'stamp-cutter-db'; // 旧: スタンプ切り出しくんと共有していたDB名
 const DB_VERSION = 2; // Increment version for schema update
 const STORE_NAME = 'projects';
 const PROJECT_KEY = 'current';
+const DB_MIGRATED_FLAG = 'ek_db_migrated';
 
-function openDB(): Promise<IDBDatabase> {
+function openDBRaw(name: string = DB_NAME): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(name, DB_VERSION);
     request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -56,6 +60,79 @@ function openDB(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+// 初回起動時に一度だけ、旧DBに残っている絵文字くんのデータを新DBへ移す。
+// 絵文字くんのプロジェクトは mainEmojiIds（配列）を持つことで判別できるため、
+// スタンプ切り出しくんのデータ（mainConfig を持つ）は移動も削除もしない。
+let migrationPromise: Promise<void> | null = null;
+
+function migrateFromLegacyDB(): Promise<void> {
+  if (!migrationPromise) migrationPromise = runLegacyMigration();
+  return migrationPromise;
+}
+
+async function runLegacyMigration(): Promise<void> {
+  try {
+    if (localStorage.getItem(DB_MIGRATED_FLAG) === 'true') return;
+    const legacyDb = await openDBRaw(LEGACY_DB_NAME);
+
+    // プロジェクト: 絵文字くんのデータ（mainEmojiIds あり）だけ移動し、旧DBからは削除する
+    const legacyData: any = await new Promise((resolve, reject) => {
+      const tx = legacyDb.transaction(STORE_NAME, 'readonly');
+      const rq = tx.objectStore(STORE_NAME).get(PROJECT_KEY);
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    });
+    if (legacyData && Array.isArray(legacyData.mainEmojiIds)) {
+      const newDb = await openDBRaw();
+      await new Promise<void>((resolve, reject) => {
+        const tx = newDb.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(legacyData, PROJECT_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      newDb.close();
+      await new Promise<void>((resolve, reject) => {
+        const tx = legacyDb.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(PROJECT_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    // 素材: どちらのアプリで保存したものか判別できないため、コピーして旧DB側にも残す
+    if (legacyDb.objectStoreNames.contains('materials')) {
+      const materials: any[] = await new Promise((resolve, reject) => {
+        const tx = legacyDb.transaction('materials', 'readonly');
+        const rq = tx.objectStore('materials').getAll();
+        rq.onsuccess = () => resolve(rq.result || []);
+        rq.onerror = () => reject(rq.error);
+      });
+      if (materials.length > 0) {
+        const newDb = await openDBRaw();
+        await new Promise<void>((resolve, reject) => {
+          const tx = newDb.transaction('materials', 'readwrite');
+          const store = tx.objectStore('materials');
+          materials.forEach(m => store.put(m));
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        newDb.close();
+      }
+    }
+
+    legacyDb.close();
+    localStorage.setItem(DB_MIGRATED_FLAG, 'true');
+  } catch (err) {
+    // 移行に失敗しても新DBで動作は続行できる（フラグ未設定のため次回起動時に再試行される）
+    console.warn('旧DBからの移行に失敗:', err);
+  }
+}
+
+async function openDB(): Promise<IDBDatabase> {
+  await migrateFromLegacyDB();
+  return openDBRaw();
 }
 
 function fileToBase64(file: File | Blob): Promise<string> {

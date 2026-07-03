@@ -172,16 +172,40 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave }) =>
   );
 };
 
-const REQUIRED_ACCESS_KEY = 'e3mo8-ji4e1';
+async function sha256(message: string) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
-function hasValidAccessKey(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
+// アクセスキーの平文はコードに置かず、SHA-256ハッシュで照合する（スタンプ切り出しくんと同方式）。
+// 一度認証したら localStorage に記憶する。localStorage はスタンプ切り出しくんと同一オリジン
+// （yayoi333.github.io）で共有されるため、'auth_verified' ではなく専用の名前を使う。
+const AUTH_VERIFIED_STORAGE = 'auth_verified_ek';
+
+async function checkAccess() {
+  if (localStorage.getItem(AUTH_VERIFIED_STORAGE) === 'true') {
+    return true;
   }
 
-  const hash = window.location.hash.replace(/^#/, '');
-  const params = new URLSearchParams(hash);
-  return params.get('access') === REQUIRED_ACCESS_KEY;
+  const hash = window.location.hash;
+  if (!hash) return false;
+
+  const params = new URLSearchParams(hash.substring(1));
+  const key = params.get('access');
+  if (!key) return false;
+
+  const keyHash = await sha256(key);
+  // ★ アクセスキーのSHA-256ハッシュ値
+  const VALID_HASH = "77fb2a7b0d5517ce6be0560843bf1b7921d9935343101a69728e2cc73016cdf4";
+
+  if (keyHash === VALID_HASH) {
+    localStorage.setItem(AUTH_VERIFIED_STORAGE, 'true');
+    return true;
+  }
+  return false;
 }
 
 const isIOSDevice = () => {
@@ -213,21 +237,21 @@ const AccessDeniedScreen = () => (
 );
 
 export default function App() {
-  const [hasAccess, setHasAccess] = useState(() => hasValidAccessKey());
+  // null = 判定中 / false = アクセス不可 / true = アクセス可
+  // 注意: この判定による早期returnはコンポーネント末尾（全フック宣言の後）で行う。
+  // 以前はここで early return していたため、途中でアクセス可に変わるとフック順序が壊れて
+  // 画面全体がクラッシュするバグがあった。
+  const [hasAccess, setHasAccess] = useState<boolean | null>(null);
   const useArrowReorder = isIOSDevice();
 
   useEffect(() => {
-    const handleHashChange = () => {
-      setHasAccess(hasValidAccessKey());
+    const runCheck = () => {
+      checkAccess().then(setHasAccess).catch(() => setHasAccess(false));
     };
-
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    runCheck();
+    window.addEventListener('hashchange', runCheck);
+    return () => window.removeEventListener('hashchange', runCheck);
   }, []);
-
-  if (!hasAccess) {
-    return <AccessDeniedScreen />;
-  }
 
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1343,6 +1367,19 @@ export default function App() {
   const nextTarget = allowedCounts.find(c => c >= validStampsCount) || 40;
   const isExactCount = validStampsCount >= 8 && validStampsCount <= 40;
   const isOverLimit = validStampsCount > 40;
+
+  // アクセス判定による分岐は、フック順序を壊さないよう必ず全フック宣言の後で行う
+  if (hasAccess === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-primary-50">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+      </div>
+    );
+  }
+
+  if (hasAccess === false) {
+    return <AccessDeniedScreen />;
+  }
 
   return (
     <div className="min-h-screen pb-20 flex flex-col">
