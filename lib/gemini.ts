@@ -2,14 +2,16 @@ import { GoogleGenAI } from "@google/genai";
 
 export async function translateMeta(
   jaName: string,
-  jaDesc: string
+  jaDesc: string,
+  apiKeyOverride?: string | null
 ): Promise<{ enName: string; enDesc: string }> {
-  // Try to get API key from localStorage, process.env (Node/AI Studio), or import.meta.env (Vite)
+  // APIキーは localStorage に暗号化して保存される（lib/storage.ts の saveApiKey/loadApiKey）。
+  // ここでは平文の localStorage を直接参照せず、App 側で復号済みのキーが apiKeyOverride 経由で渡される。
   // @ts-ignore
-  const apiKey = (typeof window !== 'undefined' ? localStorage.getItem('gemini_api_key') : null) || process.env.API_KEY || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY);
-  
+  const apiKey = apiKeyOverride?.trim() || process.env.API_KEY || (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY);
+
   if (!apiKey) {
-    throw new Error("APIキーが見つかりません。環境変数(API_KEY または VITE_GEMINI_API_KEY)を設定してください。");
+    throw new Error("APIキーが見つかりません。「APIキー設定」ボタンから設定してください。");
   }
 
   const ai = new GoogleGenAI({ apiKey });
