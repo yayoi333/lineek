@@ -72,5 +72,5 @@ AIアシスタント（Claude / Codex 等）向けの引き継ぎメモ。作業
 
 1. ルート直下の残骸ファイルの掃除（`npm run lint` を通る状態にする）
 2. 旧アクセスキーの平文が git 履歴に残っている件（履歴書き換え or キー変更。Private 化の判断とセットで）
-3. Tailwind CDN（cdn.tailwindcss.com）の同梱化＋ index.html の未使用 importmap 削除。見た目の完全一致検証が必須の大きめ作業
+3. Tailwind CDN の同梱化 → linesk リポジトリの TAILWIND_MIGRATION.md のレシピどおりに実施すること（linesk は2026-07-05完了）
 4. リポジトリ Private 化の判断（無料プランでは Private + Pages 不可 → GitHub Pro 月$4 か、他ホスティングへ引っ越し）— オーナー判断待ち
