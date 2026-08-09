@@ -99,6 +99,8 @@ export interface Stamp {
   
   flipH?: boolean;   // 左右反転
   flipV?: boolean;   // 上下反転
+  fillHolesOverride?: boolean; // 「囲みも透過」を個別に上書き
+  isEdited?: boolean; // 個別編集済み。全体設定による再処理から保護する
 }
 
 export interface ExportConfig {
@@ -145,3 +147,4 @@ export const MAIN_WIDTH = 240;
 export const MAIN_HEIGHT = 240;
 export const TAB_WIDTH = 96;
 export const TAB_HEIGHT = 74;
+

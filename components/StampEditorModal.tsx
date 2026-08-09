@@ -41,6 +41,7 @@ interface Props {
   initialTextObjects?: TextObject[];
   initialImageLayers?: ImageLayerObject[];
   initialDrawingStrokes?: DrawingStroke[];
+  fillHoles?: boolean;
 }
 
 interface HistoryState {
@@ -63,6 +64,7 @@ export const StampEditorModal: React.FC<Props> = ({
   onClose, 
   onSave, 
   onReCrop,
+  fillHoles = true,
   initialPreviewBg = 'checker',
   targetWidth = TARGET_WIDTH,
   targetHeight = TARGET_HEIGHT,
@@ -162,6 +164,7 @@ export const StampEditorModal: React.FC<Props> = ({
   const [activeImageHandle, setActiveImageHandle] = useState<'tl' | 'tr' | 'bl' | 'br' | null>(null);
 
   const [tolerance, setTolerance] = useState(stamp.currentTolerance || 50);
+  const [localFillHoles, setLocalFillHoles] = useState(stamp.fillHolesOverride ?? fillHoles);
 
   const [workingDataUrl, setWorkingDataUrl] = useState(stamp.dataUrl);
   const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
@@ -214,6 +217,7 @@ export const StampEditorModal: React.FC<Props> = ({
       setViewZoom(1);
       setCanvasPan({ x: 0, y: 0 });
       setTolerance(stamp.currentTolerance || 50);
+      setLocalFillHoles(stamp.fillHolesOverride ?? fillHoles);
       setTextObjects(initialTextObjects ?? stamp.textObjects ?? []);
       setImageLayers(initialImageLayers ?? stamp.imageLayers ?? []);
       setDrawingStrokes(initialDrawingStrokes ?? stamp.drawingStrokes ?? []);
@@ -901,13 +905,28 @@ export const StampEditorModal: React.FC<Props> = ({
       if (toleranceTimeoutRef.current) { clearTimeout(toleranceTimeoutRef.current); }
       toleranceTimeoutRef.current = window.setTimeout(async () => {
           if (stamp.originalDataUrl) {
-              try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, newVal); setWorkingDataUrl(newDataUrl); } 
+              try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, newVal, localFillHoles); setWorkingDataUrl(newDataUrl); }
               catch (err) { console.error("Failed to reprocess", err); }
           }
       }, 300);
   };
   const handleSave = () => {
-      const updatedStamp: Stamp = { ...stamp, scale, rotation, flipH, flipV, offsetX: offset.x, offsetY: offset.y, dataUrl: workingDataUrl, textObjects, imageLayers, drawingStrokes, currentTolerance: tolerance, mainImageLayerOrder };
+      const listChanged = (a: unknown[] | undefined, b: unknown[] | undefined) =>
+          JSON.stringify(a ?? []) !== JSON.stringify(b ?? []);
+      const hasEdits =
+          workingDataUrl !== stamp.dataUrl ||
+          scale !== stamp.scale ||
+          rotation !== (stamp.rotation ?? 0) ||
+          flipH !== (stamp.flipH ?? false) ||
+          flipV !== (stamp.flipV ?? false) ||
+          offset.x !== stamp.offsetX ||
+          offset.y !== stamp.offsetY ||
+          mainImageLayerOrder !== (stamp.mainImageLayerOrder ?? 100) ||
+          listChanged(textObjects, stamp.textObjects) ||
+          listChanged(imageLayers, stamp.imageLayers) ||
+          listChanged(drawingStrokes, stamp.drawingStrokes) ||
+          localFillHoles !== (stamp.fillHolesOverride ?? fillHoles);
+      const updatedStamp: Stamp = { ...stamp, scale, rotation, flipH, flipV, offsetX: offset.x, offsetY: offset.y, dataUrl: workingDataUrl, textObjects, imageLayers, drawingStrokes, currentTolerance: tolerance, mainImageLayerOrder, fillHolesOverride: localFillHoles === fillHoles ? undefined : localFillHoles, isEdited: hasEdits || (stamp.isEdited ?? false) };
       onSave(updatedStamp); onClose();
   };
 
@@ -1120,6 +1139,22 @@ export const StampEditorModal: React.FC<Props> = ({
           <h3 className="font-bold text-gray-700 text-sm mr-auto">絵文字編集 ({targetWidth}x{targetHeight})</h3>
           <EditorToolbar viewZoom={viewZoom} onViewZoomChange={setViewZoom} historyIndex={historyIndex} historyLength={history.length} onUndo={undo} onRedo={redo} />
           <div className="flex items-center gap-2">
+               <button
+                    onClick={async () => {
+                        const next = !localFillHoles;
+                        setLocalFillHoles(next);
+                        if (stamp.originalDataUrl) {
+                            try { setWorkingDataUrl(await reprocessStampWithTolerance(stamp.originalDataUrl, tolerance, next)); }
+                            catch (err) { console.error("Failed to reprocess", err); }
+                        }
+                    }}
+                    className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full border transition ${localFillHoles ? 'bg-primary-600 border-primary-600 text-white hover:bg-primary-700' : 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'}`}
+                    title="「○」の中、手と顔の間など、外側とつながっていない囲まれた背景色も透過します"
+               >
+                    <Check size={13} />
+                    <span className="hidden md:inline">囲みも透過</span>
+                    <span>{localFillHoles ? 'ON' : 'OFF'}</span>
+               </button>
                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-gray-200">
                     <span className="hidden md:inline text-xs text-gray-400 font-bold px-1">背景色</span>
                     {backgroundOptions.map(opt => (
@@ -1324,7 +1359,7 @@ export const StampEditorModal: React.FC<Props> = ({
                             if (toleranceTimeoutRef.current) { clearTimeout(toleranceTimeoutRef.current); }
                             toleranceTimeoutRef.current = window.setTimeout(async () => {
                                 if (stamp.originalDataUrl) {
-                                    try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, val); setWorkingDataUrl(newDataUrl); } 
+                                    try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, val, localFillHoles); setWorkingDataUrl(newDataUrl); }
                                     catch (err) { console.error("Failed to reprocess", err); }
                                 }
                             }, 300);

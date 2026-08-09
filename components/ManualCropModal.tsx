@@ -11,9 +11,10 @@ interface Props {
   onAddSource: (file: File) => Promise<string | void>;
   initialSourceId?: string;
   bgTolerance?: number;
+  fillHoles?: boolean;
 }
 
-export const ManualCropModal: React.FC<Props> = ({ sourceImages, isOpen, onClose, onConfirm, onAddSource, initialSourceId, bgTolerance = 20 }) => {
+export const ManualCropModal: React.FC<Props> = ({ sourceImages, isOpen, onClose, onConfirm, onAddSource, initialSourceId, bgTolerance = 20, fillHoles = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [selection, setSelection] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
@@ -184,7 +185,7 @@ export const ManualCropModal: React.FC<Props> = ({ sourceImages, isOpen, onClose
 
         // Auto-remove background logic...
         const imageData = ctx.getImageData(0, 0, currentRealW, realH);
-        const processedData = removeBackground(imageData, bgTolerance);
+        const processedData = removeBackground(imageData, bgTolerance, fillHoles);
         ctx.putImageData(processedData, 0, 0);
 
         const padding = 0;
@@ -336,3 +337,4 @@ export const ManualCropModal: React.FC<Props> = ({ sourceImages, isOpen, onClose
     </div>
   );
 };
+

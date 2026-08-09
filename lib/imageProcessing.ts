@@ -1,5 +1,21 @@
 import { Stamp, TARGET_WIDTH, TARGET_HEIGHT } from '../types';
 
+// LINE絵文字はオーナー確認済みの仕様として余白を設けない。
+export const EMOJI_MARGIN = 0;
+
+export function computeFitScale(
+  w: number,
+  h: number,
+  targetWidth: number,
+  targetHeight: number,
+  allowUpscale: boolean
+): number {
+  const availW = targetWidth - EMOJI_MARGIN * 2;
+  const availH = targetHeight - EMOJI_MARGIN * 2;
+  const scale = Math.min(availW / w, availH / h);
+  return allowUpscale ? scale : Math.min(scale, 1);
+}
+
 /**
  * Main function to process the uploaded image.
  * 1. Estimates background color.
@@ -11,7 +27,9 @@ export async function processUploadedImage(
     file: File, 
     sourceImageId: string, 
     bgTolerance: number = 20, 
-    mergeGap: number = 15
+    mergeGap: number = 15,
+    fillHoles: boolean = true,
+    autoFit: boolean = false
 ): Promise<{ stamps: Stamp[], width: number, height: number }> {
   const img = await loadImage(file);
   const canvas = document.createElement('canvas');
@@ -33,11 +51,11 @@ export async function processUploadedImage(
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   // 1 & 2. Remove Background (Modifies imageData in place)
-  const processedImageData = removeBackground(imageData, bgTolerance);
+  const processedImageData = removeBackground(imageData, bgTolerance, fillHoles);
   ctx.putImageData(processedImageData, 0, 0);
 
   // 3 & 4. Detect and Extract Stamps (Pass both processed and raw canvas)
-  const stamps = extractStamps(processedImageData, canvas, rawCanvas, sourceImageId, mergeGap, bgTolerance);
+  const stamps = extractStamps(processedImageData, canvas, rawCanvas, sourceImageId, mergeGap, bgTolerance, autoFit);
 
   return {
     stamps,
@@ -52,7 +70,8 @@ export async function processUploadedImage(
  */
 export async function reprocessStampWithTolerance(
   originalDataUrl: string, 
-  tolerance: number
+  tolerance: number,
+  fillHoles: boolean = true
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -67,52 +86,14 @@ export async function reprocessStampWithTolerance(
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
-      const w = canvas.width;
-      const h = canvas.height;
-
       // Simple corner detection for background
       // Use Top-Left corner as base
       const bgR = data[0];
       const bgG = data[1];
       const bgB = data[2];
 
-      const stack: [number, number][] = [];
-      const visited = new Uint8Array(w * h);
-
-      // Seed all 4 corners
-      stack.push([0, 0]);
-      stack.push([w-1, 0]);
-      stack.push([0, h-1]);
-      stack.push([w-1, h-1]);
-
-      const tol = tolerance * 3; 
-
-      while (stack.length > 0) {
-        const [x, y] = stack.pop()!;
-        if (x < 0 || x >= w || y < 0 || y >= h) continue;
-        
-        const idx = (y * w + x);
-        if (visited[idx]) continue;
-        
-        const pixelIdx = idx * 4;
-        const r = data[pixelIdx];
-        const g = data[pixelIdx + 1];
-        const b = data[pixelIdx + 2];
-
-        // Check if pixel is close to background color
-        const diff = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
-
-        if (diff < tol) {
-           data[pixelIdx + 3] = 0; // Transparent
-           visited[idx] = 1;
-           
-           // Add neighbors
-           stack.push([x + 1, y]);
-           stack.push([x - 1, y]);
-           stack.push([x, y + 1]);
-           stack.push([x, y - 1]);
-        }
-      }
+      const tol = tolerance * 3;
+      fillBackgroundRegions(imageData, bgR, bgG, bgB, tol, fillHoles, HOLE_MIN_AREA);
 
       ctx.putImageData(imageData, 0, 0);
       resolve(canvas.toDataURL('image/png'));
@@ -131,79 +112,18 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-export function removeBackground(imageData: ImageData, tolerance: number): ImageData {
+// 囲まれた背景(「○」の中、手と顔の間など)の穴とみなす最小面積(px)。
+const HOLE_MIN_AREA = 3;
+
+export function removeBackground(imageData: ImageData, tolerance: number, fillHoles: boolean = true): ImageData {
   const { width, height, data } = imageData;
   
   // Robust Background Detection:
   const bg = getDominantBackgroundColor(data, width, height);
   if (!bg) return imageData; // No non-transparent pixels found
   
-  const bgR = bg.r;
-  const bgG = bg.g;
-  const bgB = bg.b;
-
   const tol = tolerance * 3;
-
-  // Flood fill algorithm to remove continuous background
-  const stack: [number, number][] = [];
-  const visited = new Uint8Array(width * height);
-  
-  const getIdx = (x: number, y: number) => (y * width + x) * 4;
-  
-  const isCloseToBg = (idx: number) => {
-     const r = data[idx];
-     const g = data[idx + 1];
-     const b = data[idx + 2];
-     const diff = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
-     return diff < tol;
-  };
-
-  // Add all edge pixels that look like background to the stack
-  for (let x = 0; x < width; x++) {
-      [0, height - 1].forEach(y => {
-          const idx = getIdx(x, y);
-          if (isCloseToBg(idx)) {
-              stack.push([x, y]);
-              visited[y * width + x] = 1;
-          }
-      });
-  }
-  for (let y = 0; y < height; y++) {
-      [0, width - 1].forEach(x => {
-          const idx = getIdx(x, y);
-          if (visited[y * width + x]) return; // Already visited
-          if (isCloseToBg(idx)) {
-              stack.push([x, y]);
-              visited[y * width + x] = 1;
-          }
-      });
-  }
-
-  // Flood Fill
-  while (stack.length > 0) {
-    const [x, y] = stack.pop()!;
-    
-    // Process current pixel
-    const idx = getIdx(x, y);
-    data[idx + 3] = 0; // Set Alpha to 0
-
-    // Check neighbors
-    const neighbors = [
-        [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]
-    ];
-
-    for(const [nx, ny] of neighbors) {
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            if (!visited[ny * width + nx]) {
-                const nIdx = getIdx(nx, ny);
-                if (isCloseToBg(nIdx)) {
-                    visited[ny * width + nx] = 1;
-                    stack.push([nx, ny]);
-                }
-            }
-        }
-    }
-  }
+  fillBackgroundRegions(imageData, bg.r, bg.g, bg.b, tol, fillHoles, HOLE_MIN_AREA);
 
   return imageData;
 }
@@ -258,11 +178,15 @@ function extractStamps(
     rawCanvas: HTMLCanvasElement, 
     sourceImageId: string,
     mergeGap: number,
-    tolerance: number
+    tolerance: number,
+    autoFit: boolean
 ): Stamp[] {
   const { width, height, data } = imageData;
   const visited = new Uint8Array(width * height);
   const boxes: { x: number, y: number, w: number, h: number }[] = [];
+  // 濁点・キラキラ・効果線などの小部品を、本体との近さで残せるようにする。
+  // ここでは1px程度の孤立ノイズだけを除外し、最終サイズ判定は結合後に行う。
+  const MIN_COMPONENT_PX = 2;
 
   // Iterate to find islands of non-transparent pixels
   // Removed optimization: iterate every pixel to ensure no small details are missed on mobile/high-res
@@ -271,15 +195,15 @@ function extractStamps(
       const idx = (y * width + x) * 4;
       if (data[idx + 3] > 0 && !visited[y * width + x]) {
         const box = findBoundingBox(x, y, width, height, data, visited);
-        // Only keep boxes that are reasonably sized
-        if (box.w > 20 && box.h > 20) {
+        if (box.w >= MIN_COMPONENT_PX && box.h >= MIN_COMPONENT_PX) {
            boxes.push(box);
         }
       }
     }
   }
 
-  const mergedBoxes = mergeBoxes(boxes, mergeGap);
+  // 近い小部品を本体へ結合してから、独立した小さなゴミを除外する。
+  const mergedBoxes = mergeBoxes(boxes, mergeGap).filter(box => box.w > 20 && box.h > 20);
 
   // Sort boxes (Grid order: Top-Left to Bottom-Right)
   mergedBoxes.sort((a, b) => a.y - b.y);
@@ -328,13 +252,7 @@ function extractStamps(
     const rawTCtx = rawTempCanvas.getContext('2d');
     rawTCtx?.drawImage(rawCanvas, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
 
-    // Calculate initial scale to fit TARGET_WIDTH/HEIGHT
-    const padding = 0;
-    const availW = TARGET_WIDTH - padding;
-    const availH = TARGET_HEIGHT - padding;
-    
-    let scale = Math.min(availW / box.w, availH / box.h);
-    if (scale > 1) scale = 1;
+    const scale = computeFitScale(box.w, box.h, TARGET_WIDTH, TARGET_HEIGHT, autoFit);
 
     return {
       id: `stamp-${sourceImageId}-${index}`,
@@ -417,3 +335,57 @@ function rectIntersect(a: { x: number, y: number, w: number, h: number }, b: { x
   return (a.x < b.x + b.w + gap && a.x + a.w + gap > b.x &&
           a.y < b.y + b.h + gap && a.y + a.h + gap > b.y);
 }
+
+function fillBackgroundRegions(
+  imageData: ImageData,
+  bgR: number,
+  bgG: number,
+  bgB: number,
+  tol: number,
+  fillHoles: boolean,
+  holeMinArea: number
+): void {
+  const { width, height, data } = imageData;
+  const total = width * height;
+  const isCandidate = new Uint8Array(total);
+  for (let i = 0; i < total; i++) {
+    const p = i * 4;
+    const diff = Math.abs(data[p] - bgR) + Math.abs(data[p + 1] - bgG) + Math.abs(data[p + 2] - bgB);
+    if (diff < tol) isCandidate[i] = 1;
+  }
+
+  const labels = new Int32Array(total);
+  const touchesBorder: boolean[] = [false];
+  const areas: number[] = [0];
+  const stack: number[] = [];
+  let nextLabel = 1;
+
+  for (let start = 0; start < total; start++) {
+    if (!isCandidate[start] || labels[start] !== 0) continue;
+    const label = nextLabel++;
+    touchesBorder.push(false);
+    areas.push(0);
+    labels[start] = label;
+    stack.push(start);
+
+    while (stack.length > 0) {
+      const p = stack.pop()!;
+      const x = p % width;
+      const y = (p - x) / width;
+      areas[label]++;
+      if (x === 0 || x === width - 1 || y === 0 || y === height - 1) touchesBorder[label] = true;
+      if (x > 0) { const n = p - 1; if (isCandidate[n] && labels[n] === 0) { labels[n] = label; stack.push(n); } }
+      if (x < width - 1) { const n = p + 1; if (isCandidate[n] && labels[n] === 0) { labels[n] = label; stack.push(n); } }
+      if (y > 0) { const n = p - width; if (isCandidate[n] && labels[n] === 0) { labels[n] = label; stack.push(n); } }
+      if (y < height - 1) { const n = p + width; if (isCandidate[n] && labels[n] === 0) { labels[n] = label; stack.push(n); } }
+    }
+  }
+
+  for (let i = 0; i < total; i++) {
+    const label = labels[i];
+    if (label !== 0 && (touchesBorder[label] || (fillHoles && areas[label] >= holeMinArea))) {
+      data[i * 4 + 3] = 0;
+    }
+  }
+}
+

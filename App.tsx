@@ -4,13 +4,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, Loader2, Image as ImageIcon, Grid, Languages, Settings, ExternalLink, Plus, X as XIcon, Save, GripVertical, Smartphone, Copy, Check, Wand2, Crop, Sliders, Move, ChevronDown, ChevronUp, Info, CheckCircle2, RotateCw, Layers, Minus, Plus as PlusIcon, Trash2, Type, Lock, Unlock } from 'lucide-react';
 import { AppStep, Stamp, MetaData, ExportConfig, SourceImage, TARGET_WIDTH, TARGET_HEIGHT, MAIN_WIDTH, MAIN_HEIGHT, TAB_WIDTH, TAB_HEIGHT, TextObject, ImageLayerObject, DrawingStroke } from './types';
-import { processUploadedImage, reprocessStampWithTolerance } from './lib/imageProcessing';
+import { processUploadedImage, reprocessStampWithTolerance, computeFitScale } from './lib/imageProcessing';
 import { translateMeta } from './lib/gemini';
 import { createAndDownloadZip, createFinalImageBlob, renderAllLayers, loadProjectFromZip } from './lib/zipService';
 import { saveProject, loadProject, deleteProject, restoreSourceImages, saveApiKey, loadApiKey, removeApiKey, clearMaterials } from './lib/storage';
 import { StampEditorModal } from './components/StampEditorModal';
 import { ManualCropModal } from './components/ManualCropModal';
 import { TextSetModal } from './components/TextSetModal';
+import { StoreViewModal, StoreInfo } from './components/StoreViewModal';
 import { removeGridLines, detectGridLines } from './lib/gridRemoval';
 
 
@@ -282,6 +283,8 @@ export default function App() {
   
   // Global Settings
   const [globalTolerance, setGlobalTolerance] = useState(20);
+  const [fillHoles, setFillHoles] = useState(true);
+  const [autoFit, setAutoFit] = useState(false);
   const [gapTolerance, setGapTolerance] = useState(15); 
   const [isGapToleranceLocked, setIsGapToleranceLocked] = useState(false);
   const [isGlobalToleranceLocked, setIsGlobalToleranceLocked] = useState(false);
@@ -312,6 +315,8 @@ export default function App() {
 
   // Text Set Modal
   const [showTextSetModal, setShowTextSetModal] = useState(false);
+  const [showStoreView, setShowStoreView] = useState(false);
+  const [storeInfo, setStoreInfo] = useState<StoreInfo>({ creator: '', copyright: '', price: 190 });
 
   // API Key Settings
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
@@ -599,6 +604,11 @@ export default function App() {
       setMainEmojiIds([]);
       setTabConfig(null);
       setMeta({ stampNameJa: '', stampDescJa: '', stampNameEn: '', stampDescEn: '' });
+      setGlobalTolerance(20);
+      setGapTolerance(15);
+      setFillHoles(true);
+      setAutoFit(false);
+      lastFillHolesRef.current = true;
       setLastSavedAt(null);
       setHasGridLines(false);
       setShowDeleteAllModal(false);
@@ -631,13 +641,17 @@ export default function App() {
           if (skipAutoProcessRef.current) return;
           const currentStamps = stampsRef.current;
           if (currentStamps.length === 0) return;
-          const needsUpdate = currentStamps.some(s => s.originalDataUrl && s.currentTolerance !== globalTolerance);
+          const fillHolesChanged = lastFillHolesRef.current !== fillHoles;
+          const needsUpdate = fillHolesChanged || currentStamps.some(s => s.originalDataUrl && s.currentTolerance !== globalTolerance);
           if (!needsUpdate) return;
           try {
               const updates = new Map<string, Stamp>();
               await Promise.all(currentStamps.map(async (stamp) => {
-                  if (stamp.originalDataUrl && stamp.currentTolerance !== globalTolerance) {
-                      const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, globalTolerance);
+                  if (stamp.isEdited) return;
+                  const effectiveFillHoles = stamp.fillHolesOverride ?? fillHoles;
+                  const affectedByGlobalChange = fillHolesChanged && stamp.fillHolesOverride === undefined;
+                  if (stamp.originalDataUrl && (affectedByGlobalChange || stamp.currentTolerance !== globalTolerance)) {
+                      const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, globalTolerance, effectiveFillHoles);
                       updates.set(stamp.id, {
                           ...stamp,
                           dataUrl: newDataUrl,
@@ -648,12 +662,24 @@ export default function App() {
               if (updates.size > 0) {
                   setStamps(prev => prev.map(s => updates.get(s.id) || s));
               }
+              lastFillHolesRef.current = fillHoles;
           } catch (err) {
               console.error("Bulk processing failed", err);
           }
       }, 100); 
       return () => clearTimeout(timer);
-  }, [globalTolerance]);
+  }, [globalTolerance, fillHoles]);
+
+  // 枠いっぱい設定を切り替えたら、個別編集していない絵文字だけ倍率を更新する。
+  useEffect(() => {
+      if (skipAutoProcessRef.current) return;
+      setStamps(prev => prev.map(stamp => (
+          stamp.isEdited ? stamp : {
+              ...stamp,
+              scale: computeFitScale(stamp.width, stamp.height, TARGET_WIDTH, TARGET_HEIGHT, autoFit)
+          }
+      )));
+  }, [autoFit]);
 
   // Debounced Re-generation Effect (Gap)
   useEffect(() => {
@@ -665,11 +691,32 @@ export default function App() {
           try {
               let newAutoStamps: Stamp[] = [];
               for (const src of sourceImages) {
-                  const result = await processUploadedImage(src.file, src.id, globalTolerance, gapTolerance);
+                  const result = await processUploadedImage(src.file, src.id, globalTolerance, gapTolerance, fillHoles, autoFit);
                   newAutoStamps.push(...result.stamps);
               }
               const manualStamps = stampsRef.current.filter(s => s.id.startsWith('stamp-manual-'));
-              setStamps([...newAutoStamps, ...manualStamps]);
+              const editedStamps = stampsRef.current.filter(s => s.isEdited && !s.id.startsWith('stamp-manual-'));
+              const isSameArea = (a: Stamp, b: Stamp) =>
+                  a.sourceImageId === b.sourceImageId &&
+                  a.originalX < b.originalX + b.width && a.originalX + a.width > b.originalX &&
+                  a.originalY < b.originalY + b.height && a.originalY + a.height > b.originalY;
+              const placed = new Set<string>();
+              const mergedStamps: Stamp[] = [];
+              for (const newStamp of newAutoStamps) {
+                  const edited = editedStamps.find(existing => isSameArea(newStamp, existing));
+                  if (edited) {
+                      if (!placed.has(edited.id)) {
+                          mergedStamps.push(edited);
+                          placed.add(edited.id);
+                      }
+                  } else {
+                      mergedStamps.push(newStamp);
+                  }
+              }
+              for (const edited of editedStamps) {
+                  if (!placed.has(edited.id)) mergedStamps.push(edited);
+              }
+              setStamps([...mergedStamps, ...manualStamps]);
           } catch (err) {
               console.error("Regeneration failed", err);
           } finally {
@@ -736,7 +783,7 @@ export default function App() {
           await deleteProject();
           let allStamps: Stamp[] = [];
           for (const source of sourceImages) {
-             const result = await processUploadedImage(source.file, source.id, globalTolerance, gapTolerance);
+             const result = await processUploadedImage(source.file, source.id, globalTolerance, gapTolerance, fillHoles, autoFit);
              allStamps = [...allStamps, ...result.stamps];
           }
           setStamps(allStamps);
@@ -871,7 +918,7 @@ export default function App() {
       setIsProcessing(true); 
       try {
         if (method === 'auto') {
-            const result = await processUploadedImage(selectedSourceForNewStamp.file, selectedSourceForNewStamp.id, globalTolerance, gapTolerance);
+            const result = await processUploadedImage(selectedSourceForNewStamp.file, selectedSourceForNewStamp.id, globalTolerance, gapTolerance, fillHoles, autoFit);
             const timestamp = Date.now();
             const newStamps = result.stamps.map((s, i) => ({
                 ...s,
@@ -1217,6 +1264,7 @@ export default function App() {
   // Ref to skip auto-processing during restore
   const skipAutoProcessRef = useRef(false);
   const skipAutoSaveRef = useRef(false);
+  const lastFillHolesRef = useRef(fillHoles);
 
   // --- Drag and Drop Handlers ---
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, position: number) => {
@@ -1391,6 +1439,20 @@ export default function App() {
                         <div className="bg-primary-500 p-2 rounded-lg text-white"><Grid size={24} /></div>
                         <h1 className="text-xl font-bold text-gray-800">絵文字切り出しくん</h1>
                     </div>
+                    <div className="ml-auto flex items-center gap-2">
+                    <button
+                        onClick={() => setFillHoles(!fillHoles)}
+                        className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-full border transition ${
+                          fillHoles
+                            ? 'bg-primary-600 border-primary-600 text-white hover:bg-primary-700'
+                            : 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
+                        }`}
+                        title="「○」の中、手と顔の間など、外側とつながっていない囲まれた背景色も透過します"
+                    >
+                        <CheckCircle2 size={14} />
+                        <span className="hidden sm:inline">囲みも透過</span>
+                        <span>{fillHoles ? 'ON' : 'OFF'}</span>
+                    </button>
                     <button 
                         onClick={() => setShowApiKeyModal(true)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${userApiKey ? 'bg-primary-50 border-primary-200 text-primary-600' : 'bg-gray-50 border-gray-200 text-gray-400 hover:text-gray-600'}`}
@@ -1398,6 +1460,7 @@ export default function App() {
                         <Settings size={16} />
                         {userApiKey ? 'API設定済' : 'APIキー設定'}
                     </button>
+                    </div>
                 </div>
                 {step === AppStep.EDIT && (
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-3 animate-fade-in border-t border-primary-50 pt-2">
@@ -1636,6 +1699,20 @@ export default function App() {
                         <button onClick={() => { const updatedStamps = stamps.map(s => ({ ...s, textObjects: (s.textObjects ?? []).filter(t => !t.id.startsWith('txt-set-')), })); setStamps(updatedStamps); showToast('一括削除しました'); }} className={`flex items-center gap-1 bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 text-gray-600 hover:text-red-600 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition ${stamps.some(s => s.textObjects?.some(t => t.id.startsWith('txt-set-'))) ? '' : 'opacity-30 pointer-events-none'}`}><Trash2 size={14} />一括テキスト削除</button>
                         <button onClick={handleUnifyScale} className="flex items-center gap-1 bg-white border border-gray-300 hover:bg-primary-50 hover:border-primary-300 text-gray-600 hover:text-primary-600 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition"><Sliders size={14} />サイズ揃え</button>
                         <button onClick={handleCenterAll} className="flex items-center gap-1 bg-white border border-gray-300 hover:bg-primary-50 hover:border-primary-300 text-gray-600 hover:text-primary-600 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition"><Move size={14} />中央揃え</button>
+                        <button
+                          onClick={() => setAutoFit(!autoFit)}
+                          className={`flex items-center gap-1 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition border ${autoFit ? 'bg-primary-50 border-primary-300 text-primary-700 hover:bg-primary-100' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                          title="切り出した画像が小さいとき、余白0pxで枠いっぱいに拡大します"
+                        >
+                          <Crop size={14} />枠いっぱいに拡大{autoFit ? '：ON' : '：OFF'}
+                        </button>
+                        <button
+                          onClick={() => setShowStoreView(true)}
+                          className="flex items-center gap-1 bg-lime-100 hover:bg-lime-200 border border-lime-300 text-lime-800 font-bold py-1.5 px-3 rounded-lg shadow-sm text-xs sm:text-sm transition"
+                          title="LINE絵文字ストア風のプレビューを表示します"
+                        >
+                          <Smartphone size={14} />ストアビュー
+                        </button>
                     </div>
                 </div>
               </div>
@@ -1880,6 +1957,7 @@ export default function App() {
           onSave={(updated) => { if (editingSpecialType) { updateSpecialConfig(updated); } else { updateStamp(updated); } }}
           onReCrop={() => handleReCropFromEditor(editingStamp)}
           initialPreviewBg={previewBg}
+          fillHoles={fillHoles}
           targetWidth={editingSpecialType === 'tab' ? TAB_WIDTH : TARGET_WIDTH}
           targetHeight={editingSpecialType === 'tab' ? TAB_HEIGHT : TARGET_HEIGHT}
           initialScale={editingSpecialType === 'tab' ? tabConfig?.scale : undefined}
@@ -1937,8 +2015,18 @@ export default function App() {
         </div>
       )}
 
-      <ManualCropModal sourceImages={sourceImages} isOpen={isManualCropping} onClose={() => { setIsManualCropping(false); setTargetReplaceId(null); setManualCropInitialSourceId(undefined); }} onConfirm={handleManualCropConfirm} onAddSource={handleAddSourceFromModal} initialSourceId={manualCropInitialSourceId} bgTolerance={globalTolerance} />
+      <ManualCropModal sourceImages={sourceImages} isOpen={isManualCropping} onClose={() => { setIsManualCropping(false); setTargetReplaceId(null); setManualCropInitialSourceId(undefined); }} onConfirm={handleManualCropConfirm} onAddSource={handleAddSourceFromModal} initialSourceId={manualCropInitialSourceId} bgTolerance={globalTolerance} fillHoles={fillHoles} />
       <TextSetModal isOpen={showTextSetModal} onClose={() => setShowTextSetModal(false)} stamps={stamps} onApply={(updatedStamps) => { setStamps(updatedStamps); }} />
+
+      <StoreViewModal
+        isOpen={showStoreView}
+        onClose={() => setShowStoreView(false)}
+        meta={meta}
+        stamps={stamps.filter(stamp => !stamp.isExcluded)}
+        mainEmojiIds={mainEmojiIds}
+        storeInfo={storeInfo}
+        onStoreInfoChange={setStoreInfo}
+      />
 
       {showRestoreDialog && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
@@ -2020,3 +2108,4 @@ export default function App() {
     </div>
   );
 }
+
