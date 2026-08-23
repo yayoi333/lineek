@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { X, Crop, Check, Plus, Upload } from 'lucide-react';
 import { Stamp, SourceImage, TARGET_WIDTH, TARGET_HEIGHT } from '../types';
-import { removeBackground } from '../lib/imageProcessing';
+import { detectAlreadyTransparent, removeBackground } from '../lib/imageProcessing';
 
 interface Props {
   sourceImages: SourceImage[];
@@ -185,8 +185,11 @@ export const ManualCropModal: React.FC<Props> = ({ sourceImages, isOpen, onClose
 
         // Auto-remove background logic...
         const imageData = ctx.getImageData(0, 0, currentRealW, realH);
-        const processedData = removeBackground(imageData, bgTolerance, fillHoles);
-        ctx.putImageData(processedData, 0, 0);
+        // 切り取った範囲が背景透過済みなら、透過処理をすると線画まで削れるのでそのまま使う
+        if (!detectAlreadyTransparent(imageData)) {
+          const processedData = removeBackground(imageData, bgTolerance, fillHoles);
+          ctx.putImageData(processedData, 0, 0);
+        }
 
         const padding = 0;
         const availW = TARGET_WIDTH - padding;
