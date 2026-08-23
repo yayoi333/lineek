@@ -90,6 +90,7 @@ export interface Stamp {
   offsetX: number;
   offsetY: number;
   currentTolerance?: number; // Track the tolerance used for this stamp
+  skipBgRemoval?: boolean; // 元画像が背景透過済み。背景透過をせず切り分けだけした(透過スライダーの対象外)
   textObjects?: TextObject[]; // Added text objects
   
   // Future features

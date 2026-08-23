@@ -905,7 +905,7 @@ export const StampEditorModal: React.FC<Props> = ({
       if (toleranceTimeoutRef.current) { clearTimeout(toleranceTimeoutRef.current); }
       toleranceTimeoutRef.current = window.setTimeout(async () => {
           if (stamp.originalDataUrl) {
-              try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, newVal, localFillHoles); setWorkingDataUrl(newDataUrl); }
+              try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, newVal, localFillHoles, stamp.skipBgRemoval); setWorkingDataUrl(newDataUrl); }
               catch (err) { console.error("Failed to reprocess", err); }
           }
       }, 300);
@@ -1144,7 +1144,7 @@ export const StampEditorModal: React.FC<Props> = ({
                         const next = !localFillHoles;
                         setLocalFillHoles(next);
                         if (stamp.originalDataUrl) {
-                            try { setWorkingDataUrl(await reprocessStampWithTolerance(stamp.originalDataUrl, tolerance, next)); }
+                            try { setWorkingDataUrl(await reprocessStampWithTolerance(stamp.originalDataUrl, tolerance, next, stamp.skipBgRemoval)); }
                             catch (err) { console.error("Failed to reprocess", err); }
                         }
                     }}
@@ -1347,7 +1347,14 @@ export const StampEditorModal: React.FC<Props> = ({
                  </CollapsiblePanel>
              )}
 
-             {mode === 'wand' && originalImage && (
+             {mode === 'wand' && originalImage && stamp.skipBgRemoval && (
+                <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-xs text-gray-600">
+                   <Wand2 size={16} className="shrink-0 text-gray-400" />
+                   この画像は背景が透過済みなので、透過処理はしていません（切り分けのみ）。
+                </div>
+             )}
+
+             {mode === 'wand' && originalImage && !stamp.skipBgRemoval && (
                 <div className="flex items-center gap-4 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
                     <div className="flex items-center gap-2 text-yellow-700 font-bold text-sm min-w-[80px] shrink-0">
                         <Wand2 size={16} /> 追加透過
@@ -1359,7 +1366,7 @@ export const StampEditorModal: React.FC<Props> = ({
                             if (toleranceTimeoutRef.current) { clearTimeout(toleranceTimeoutRef.current); }
                             toleranceTimeoutRef.current = window.setTimeout(async () => {
                                 if (stamp.originalDataUrl) {
-                                    try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, val, localFillHoles); setWorkingDataUrl(newDataUrl); }
+                                    try { const newDataUrl = await reprocessStampWithTolerance(stamp.originalDataUrl, val, localFillHoles, stamp.skipBgRemoval); setWorkingDataUrl(newDataUrl); }
                                     catch (err) { console.error("Failed to reprocess", err); }
                                 }
                             }, 300);

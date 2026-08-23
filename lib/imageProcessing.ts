@@ -17,6 +17,86 @@ export function computeFitScale(
 }
 
 /**
+ * 背景透過の扱い。
+ * auto  = 画像を見て「透過済み」なら背景透過をスキップする(既定)
+ * force = 常に透過済みとみなし、背景透過をしない
+ * off   = 常に背景透過する(従来の動き)
+ */
+export type TransparencyMode = 'auto' | 'force' | 'off';
+
+// alphaがこの値未満なら「透明」とみなす。
+const ALPHA_TRANSPARENT_MAX = 10;
+// 外周のうちこの割合以上が透明なら「背景透過済み」の候補とする。
+const BORDER_TRANSPARENT_RATIO = 0.9;
+// 全体のうちこの割合以上が透明であることも条件にする(誤検知防止)。
+const TOTAL_TRANSPARENT_RATIO = 0.05;
+
+/**
+ * すでに背景が透過されている画像かどうかを判定する。
+ * ChatGPTなどが出力する透過PNGは、透明部分のRGBが(0,0,0)になっていることが多く、
+ * そのまま背景透過にかけると黒い線画まで背景色とみなされて削られてしまう。
+ * そのため、外周がほぼ透明で、かつ画像全体にもある程度の透明部分がある場合は
+ * 背景透過をスキップして切り分けだけ行う。
+ */
+export function detectAlreadyTransparent(imageData: ImageData): boolean {
+  const { width, height, data } = imageData;
+  if (width < 2 || height < 2) return false;
+
+  // 1. 外周1pxの透明率
+  let borderTotal = 0;
+  let borderTransparent = 0;
+  const countBorder = (idx: number) => {
+    borderTotal++;
+    if (data[idx + 3] < ALPHA_TRANSPARENT_MAX) borderTransparent++;
+  };
+  for (let x = 0; x < width; x++) {
+    countBorder((0 * width + x) * 4);
+    countBorder(((height - 1) * width + x) * 4);
+  }
+  for (let y = 0; y < height; y++) {
+    countBorder((y * width + 0) * 4);
+    countBorder((y * width + (width - 1)) * 4);
+  }
+  if (borderTransparent / borderTotal < BORDER_TRANSPARENT_RATIO) return false;
+
+  // 2. 画像全体の透明率
+  const total = width * height;
+  let transparent = 0;
+  for (let i = 0; i < total; i++) {
+    if (data[i * 4 + 3] < ALPHA_TRANSPARENT_MAX) transparent++;
+  }
+  return transparent / total >= TOTAL_TRANSPARENT_RATIO;
+}
+
+/**
+ * 画像ファイルが背景透過済みかどうかを判定する。
+ * 手動切り出しなど、processUploadedImage を通さない経路でも同じ判定を使うためのもの。
+ */
+export async function isFileAlreadyTransparent(file: File): Promise<boolean> {
+  try {
+    const img = await loadImage(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return false;
+    ctx.drawImage(img, 0, 0);
+    return detectAlreadyTransparent(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * transparencyMode と画像の中身から、背景透過をスキップすべきかを決める。
+ */
+function shouldSkipBgRemoval(imageData: ImageData, mode: TransparencyMode): boolean {
+  if (mode === 'force') return true;
+  if (mode === 'off') return false;
+  return detectAlreadyTransparent(imageData);
+}
+
+/**
  * Main function to process the uploaded image.
  * 1. Estimates background color.
  * 2. Removes background (Flood fill).
@@ -29,8 +109,9 @@ export async function processUploadedImage(
     bgTolerance: number = 20, 
     mergeGap: number = 15,
     fillHoles: boolean = true,
-    autoFit: boolean = false
-): Promise<{ stamps: Stamp[], width: number, height: number }> {
+    autoFit: boolean = false,
+    transparencyMode: TransparencyMode = 'auto'
+): Promise<{ stamps: Stamp[], width: number, height: number, skippedBgRemoval: boolean }> {
   const img = await loadImage(file);
   const canvas = document.createElement('canvas');
   canvas.width = img.width;
@@ -51,16 +132,21 @@ export async function processUploadedImage(
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   // 1 & 2. Remove Background (Modifies imageData in place)
-  const processedImageData = removeBackground(imageData, bgTolerance, fillHoles);
+  // 背景透過済みなら、この工程を丸ごと飛ばして元のalphaをそのまま使う。
+  const skippedBgRemoval = shouldSkipBgRemoval(imageData, transparencyMode);
+  const processedImageData = skippedBgRemoval
+    ? imageData
+    : removeBackground(imageData, bgTolerance, fillHoles);
   ctx.putImageData(processedImageData, 0, 0);
 
   // 3 & 4. Detect and Extract Stamps (Pass both processed and raw canvas)
-  const stamps = extractStamps(processedImageData, canvas, rawCanvas, sourceImageId, mergeGap, bgTolerance, autoFit);
+  const stamps = extractStamps(processedImageData, canvas, rawCanvas, sourceImageId, mergeGap, bgTolerance, autoFit, skippedBgRemoval);
 
   return {
     stamps,
     width: img.width,
     height: img.height,
+    skippedBgRemoval,
   };
 }
 
@@ -71,8 +157,11 @@ export async function processUploadedImage(
 export async function reprocessStampWithTolerance(
   originalDataUrl: string, 
   tolerance: number,
-  fillHoles: boolean = true
+  fillHoles: boolean = true,
+  skipBgRemoval: boolean = false
 ): Promise<string> {
+  // 背景透過済みのスタンプは、透過スライダーを動かしても何もしない。
+  if (skipBgRemoval) return originalDataUrl;
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -86,6 +175,12 @@ export async function reprocessStampWithTolerance(
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
+
+      // 背景透過済みの画像は透過処理をしない(黒い線画が削られるのを防ぐ)。
+      if (detectAlreadyTransparent(imageData)) {
+        resolve(originalDataUrl);
+        return;
+      }
       // Simple corner detection for background
       // Use Top-Left corner as base
       const bgR = data[0];
@@ -179,7 +274,8 @@ function extractStamps(
     sourceImageId: string,
     mergeGap: number,
     tolerance: number,
-    autoFit: boolean
+    autoFit: boolean,
+    skippedBgRemoval: boolean = false
 ): Stamp[] {
   const { width, height, data } = imageData;
   const visited = new Uint8Array(width * height);
@@ -268,7 +364,8 @@ function extractStamps(
       rotation: 0, // Initialize rotation
       offsetX: 0,
       offsetY: 0,
-      currentTolerance: tolerance
+      currentTolerance: tolerance,
+      skipBgRemoval: skippedBgRemoval || undefined
     };
   });
 }
